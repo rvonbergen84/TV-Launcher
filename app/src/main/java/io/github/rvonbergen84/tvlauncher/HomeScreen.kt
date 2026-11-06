@@ -11,7 +11,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Canvas
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -62,8 +61,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -218,13 +215,15 @@ fun HomeContent(
         val labelSpace = 30.dp
         val rowsHeight = topWidth * 9f / 16f + labelSpace +
             (if (layout.second.isNotEmpty()) smallWidth * 9f / 16f + labelSpace else 0.dp)
-        val heroHeight = maxHeight - rowsHeight - 24.dp
+        // The rows end at the bottom edge (the space under the second row doubles as
+        // the margin), so the "More" area starts fully off screen.
+        val heroHeight = maxHeight - rowsHeight
 
         // Both main rows sit on the photo with nothing scrolling. Only the "More" area,
         // for anything beyond 11 tiles, scrolls up and blurs the photo.
         var inMore by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
-        val moreTitleIndex = if (serviceOn) 2 else 3 // after hero, rows, [warning]
+        val moreTitleIndex = 2 // after hero and rows
         val onRowsFocus = Modifier.onFocusChanged {
             if (it.hasFocus) {
                 inMore = false
@@ -302,16 +301,6 @@ fun HomeContent(
                         }
                     }
                 }
-                if (!serviceOn) {
-                    item(key = "warning") {
-                        Text(
-                            "The Home button isn't connected. Open Settings at the top right to turn it on.",
-                            color = Warning,
-                            fontSize = 15.sp,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                }
                 if (layout.more.isNotEmpty()) {
                     item(key = "more-title") { SectionTitle("More") }
                     items(layout.more.chunked(GRID_COLUMNS), key = { row -> row.first().key }) { row ->
@@ -327,7 +316,7 @@ fun HomeContent(
         }
 
         TopOverlay(
-            now, weather, place, hidden = inMore, gridAmount = moreAmount,
+            now, weather, place, hidden = inMore, gridAmount = moreAmount, serviceOn = serviceOn,
             downTo = topFocus.getOrNull(lastTop) ?: firstFavorite,
             onOpenSetup = onOpenSetup,
         )
@@ -562,6 +551,7 @@ private fun TopOverlay(
     place: Prefs.Place?,
     hidden: Boolean,
     gridAmount: State<Float>,
+    serviceOn: Boolean,
     downTo: FocusRequester,
     onOpenSetup: () -> Unit,
 ) {
@@ -594,6 +584,15 @@ private fun TopOverlay(
                     fontSize = 18.sp,
                     color = Color.White.copy(alpha = 0.9f),
                     style = TextStyle(shadow = TextShadow),
+                )
+            }
+            if (!serviceOn) {
+                Text(
+                    "The Home button isn't connected. Open Settings (the gear) to turn it on.",
+                    color = Warning,
+                    fontSize = 14.sp,
+                    style = TextStyle(shadow = TextShadow),
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }
@@ -667,7 +666,6 @@ private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () 
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    ControllerIcon(Modifier.size(width = width / 4, height = width / 7).padding(bottom = 4.dp))
                     Text(
                         tile.label,
                         fontSize = (width.value / 7f).coerceIn(14f, 22f).sp,
@@ -711,27 +709,6 @@ private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () 
             style = TextStyle(shadow = TextShadow),
             modifier = Modifier.padding(top = 8.dp).alpha(if (focused) 1f else 0f),
         )
-    }
-}
-
-/** A plain game controller outline: body with two grips, a d-pad and two buttons. */
-@Composable
-private fun ControllerIcon(modifier: Modifier) {
-    Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        val ink = Color.White.copy(alpha = 0.92f)
-        // Body and grips.
-        drawRoundRect(ink, topLeft = Offset(w * 0.08f, h * 0.12f), size = Size(w * 0.84f, h * 0.56f), cornerRadius = CornerRadius(h * 0.28f))
-        drawCircle(ink, radius = h * 0.26f, center = Offset(w * 0.22f, h * 0.66f))
-        drawCircle(ink, radius = h * 0.26f, center = Offset(w * 0.78f, h * 0.66f))
-        // D-pad and buttons, cut out in the tile colour by drawing them transparent-dark.
-        val cut = Color.Black.copy(alpha = 0.55f)
-        val arm = h * 0.09f
-        drawRect(cut, topLeft = Offset(w * 0.27f - arm * 2.2f, h * 0.40f - arm / 2), size = Size(arm * 4.4f, arm))
-        drawRect(cut, topLeft = Offset(w * 0.27f - arm / 2, h * 0.40f - arm * 2.2f), size = Size(arm, arm * 4.4f))
-        drawCircle(cut, radius = arm * 0.85f, center = Offset(w * 0.68f, h * 0.46f))
-        drawCircle(cut, radius = arm * 0.85f, center = Offset(w * 0.78f, h * 0.33f))
     }
 }
 

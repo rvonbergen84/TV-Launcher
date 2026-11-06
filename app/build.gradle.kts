@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.rvonbergen84.tvlauncher"
         minSdk = 24
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.10.0"
+        versionCode = 11
+        versionName = "0.11.0"
     }
 
     // One shared signing key, kept in the repo, so a build from any machine

@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
@@ -118,6 +120,8 @@ class HomePreviewTest {
     fun extraAppsGoInMore() {
         render(extraApps = true)
         focus("Netflix")
+        compose.onNodeWithText("More").assertIsNotDisplayed()
+        capture("home-with-more")
         press(Key.DirectionDown)
         press(Key.DirectionDown)
         compose.onNodeWithContentDescription("Spotify").assertIsFocused()
