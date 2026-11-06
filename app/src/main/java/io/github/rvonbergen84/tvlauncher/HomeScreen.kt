@@ -267,7 +267,7 @@ private fun softBlur(source: ImageBitmap): ImageBitmap {
 }
 
 /** How dark the photo gets behind the app grid. */
-internal const val GRID_DIM = 0.6f
+internal const val GRID_DIM = 0.4f
 
 /** Cycles through the photos on a timer, loading each before showing it. */
 @Composable
