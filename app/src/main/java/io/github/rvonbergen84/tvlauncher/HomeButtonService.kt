@@ -4,8 +4,12 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityEvent
 
 /**
@@ -27,17 +31,36 @@ class HomeButtonService : AccessibilityService() {
         Prefs.log(this, "Service connected")
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var holdFired = false
+    private val onHold = Runnable {
+        holdFired = true
+        Prefs.log(this, "Home held -> opening quick panel")
+        openQuickPanel(this)
+    }
+
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            // Log button codes only, so we learn what the remote's Home button sends.
+            // Log button codes only, so we learn what the remote's buttons send.
             Prefs.log(this, "Key ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode})")
         }
         if (event.keyCode == KeyEvent.KEYCODE_HOME && Prefs.catchHomeKey(this)) {
-            if (event.action == KeyEvent.ACTION_UP) {
-                Prefs.log(this, "Home caught -> opening TV Launcher")
-                openLauncher(this)
+            // We swallow Home so the stock home screen never opens. That also hides
+            // the press from the system, so we handle tap vs. hold ourselves.
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) {
+                    holdFired = false
+                    handler.postDelayed(onHold, ViewConfiguration.getLongPressTimeout().toLong())
+                }
+                KeyEvent.ACTION_UP -> {
+                    handler.removeCallbacks(onHold)
+                    if (!holdFired) {
+                        Prefs.log(this, "Home caught -> opening TV Launcher")
+                        openLauncher(this)
+                    }
+                }
             }
-            return true // swallow both down and up so the stock home doesn't open
+            return true
         }
         return false
     }
@@ -83,6 +106,45 @@ class HomeButtonService : AccessibilityService() {
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
             )
             context.startActivity(intent)
+        }
+
+        /**
+         * What holding Home normally does on Google TV: the side panel with settings,
+         * inputs and profiles. It lives inside the stock launcher, so we look for an
+         * activity there that other apps may open. If there isn't one, open TV settings.
+         */
+        fun openQuickPanel(context: Context) {
+            val panel = findStockPanel(context)
+            if (panel != null) {
+                // The panel may be drawn by the stock home activity; don't redirect away from it.
+                Prefs.startBypass(context, 5_000)
+                val opened = runCatching {
+                    context.startActivity(
+                        Intent().setComponent(panel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }.isSuccess
+                Prefs.log(context, "Panel ${panel.shortClassName}: ${if (opened) "opened" else "refused"}")
+                if (opened) return
+            }
+            Prefs.log(context, "No stock panel available -> TV settings")
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+
+        private fun findStockPanel(context: Context): ComponentName? {
+            val pm = context.packageManager
+            for (pkg in STOCK_LAUNCHERS) {
+                val info = runCatching {
+                    pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES)
+                }.getOrNull() ?: continue
+                val match = info.activities.orEmpty().firstOrNull {
+                    it.exported && it.permission == null &&
+                        it.name.contains("dashboard", ignoreCase = true)
+                }
+                if (match != null) return ComponentName(pkg, match.name)
+            }
+            return null
         }
 
         fun isEnabled(context: Context): Boolean {
