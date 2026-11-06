@@ -6,7 +6,10 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -45,6 +50,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
@@ -74,6 +82,7 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Date
 import kotlin.random.Random
@@ -153,6 +162,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
 }
 
 /** Everything drawn on the home screen. No loading here, so it can be previewed with sample data. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeContent(
     layout: Catalog.Layout,
@@ -178,15 +188,29 @@ fun HomeContent(
         val favWidth = (content - favGap * (Prefs.FAVORITE_SLOTS - 1)) / Prefs.FAVORITE_SLOTS
         val gridWidth = (content - gridGap * (GRID_COLUMNS - 1)) / GRID_COLUMNS
         val heroHeight = maxHeight - favWidth * 9f / 16f - 96.dp
-        val heroPx = with(LocalDensity.current) { heroHeight.toPx() }
-        val dimmed by remember(heroPx) {
-            derivedStateOf {
-                listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > heroPx * 0.35f
+        // Which part of the screen has focus. The top row keeps the photo sharp and
+        // the clock showing; anything below it blurs and dims the photo.
+        var inGrid by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+        val appsTitleIndex = if (serviceOn) 2 else 3 // after hero, favorites, [warning]
+        val onFavoritesFocus = Modifier.onFocusChanged {
+            if (it.hasFocus) {
+                inGrid = false
+                scope.launch { listState.animateScrollToItem(0) }
+            }
+        }
+        val onGridFocus = Modifier.onFocusChanged {
+            if (it.hasFocus && !inGrid) {
+                inGrid = true
+                scope.launch { listState.animateScrollToItem(appsTitleIndex) }
             }
         }
 
-        Backdrop(frame, dimmed)
+        Backdrop(frame, dimmed = inGrid)
 
+        // TVs default to scrolling the selected item a third of the way down the screen,
+        // which pushed the top row up. Only scroll as much as needed to keep it in view.
+        CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) {
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(start = SIDE.dp, end = SIDE.dp, bottom = 48.dp),
@@ -198,7 +222,7 @@ fun HomeContent(
                 }
             }
             item(key = "favorites") {
-                Row(horizontalArrangement = Arrangement.spacedBy(favGap)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(favGap), modifier = onFavoritesFocus) {
                     layout.favorites.forEachIndexed { index, app ->
                         AppTile(
                             app = app,
@@ -226,7 +250,7 @@ fun HomeContent(
                 items(layout.others.chunked(GRID_COLUMNS), key = { row -> row.first().packageName }) { row ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(gridGap),
-                        modifier = Modifier.padding(bottom = 4.dp),
+                        modifier = onGridFocus.padding(bottom = 4.dp),
                     ) {
                         row.forEach { app -> AppTile(app, gridWidth, Modifier, onLongClick = { onAppMenu(app) }) }
                     }
@@ -234,7 +258,7 @@ fun HomeContent(
             }
             if (inputs.isNotEmpty()) {
                 item(key = "inputs") {
-                    Column {
+                    Column(onGridFocus) {
                         SectionTitle("Inputs")
                         Row(horizontalArrangement = Arrangement.spacedBy(gridGap)) {
                             inputs.forEach { InputTile(it, gridWidth) }
@@ -244,7 +268,24 @@ fun HomeContent(
             }
         }
 
-        TopOverlay(now, weather, place, hidden = dimmed, onOpenSetup)
+        }
+
+        TopOverlay(now, weather, place, hidden = inGrid, onOpenSetup)
+    }
+}
+
+/** Scrolls only as far as needed to keep the focused item on screen, with a small margin. */
+@OptIn(ExperimentalFoundationApi::class)
+private object KeepInView : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val margin = containerSize * 0.06f
+        val end = offset + size
+        return when {
+            size + margin * 2 > containerSize -> offset - margin
+            offset < margin -> offset - margin
+            end > containerSize - margin -> end - (containerSize - margin)
+            else -> 0f
+        }
     }
 }
 
@@ -554,7 +595,7 @@ private fun InputTile(input: InputEntry, width: Dp) {
 // ---------- Hold-OK menu ----------
 
 @Composable
-private fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: Boolean) -> Unit) {
+internal fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: Boolean) -> Unit) {
     val context = LocalContext.current
     val index = favorites.indexOf(app.packageName)
     val isFavorite = index >= 0
@@ -594,9 +635,24 @@ private fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: Bo
         add("Cancel" to { onDone(false) })
     }
 
+    // The menu opens while OK is still held down. When it's let go, that release would
+    // press the first option, so ignore button releases until a new press starts here.
+    var armed by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = { onDone(false) }) {
         Column(
-            Modifier.background(Color(0xFF1A202B), RoundedCornerShape(16.dp)).padding(24.dp),
+            Modifier
+                .onPreviewKeyEvent { event ->
+                    when {
+                        armed -> false
+                        // Fresh press (not the held button repeating): menu is live from here on.
+                        event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 -> {
+                            armed = true
+                            false
+                        }
+                        else -> true // repeats and the release of the held button: swallow
+                    }
+                }
+                .background(Color(0xFF1A202B), RoundedCornerShape(16.dp)).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(app.label, fontSize = 20.sp, color = Color.White, modifier = Modifier.padding(bottom = 6.dp))

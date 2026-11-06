@@ -1,5 +1,6 @@
 package io.github.rvonbergen84.tvlauncher
 
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -12,7 +13,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.requestFocus
@@ -20,10 +26,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.github.takahirom.roborazzi.captureRoboImage
-import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.util.Calendar
@@ -40,28 +49,85 @@ class HomePreviewTest {
     @get:Rule
     val compose = createComposeRule()
 
-    @Test
-    fun home() = render("home") {
-        compose.onNodeWithContentDescription("YouTube").requestFocus()
+    private lateinit var listState: LazyListState
+
+    /** Pretend to be a TV: Compose scrolls differently on TVs, and that's what we ship to. */
+    @Before
+    fun actLikeTv() {
+        shadowOf(RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(PackageManager.FEATURE_LEANBACK, true)
     }
 
     @Test
-    fun settingsFocused() = render("settings") {
-        compose.onNodeWithContentDescription("Settings").requestFocus()
+    fun home() {
+        render()
+        focus("YouTube")
+        assertAtTop()
+        capture("home")
     }
 
     @Test
-    fun grid() = render("grid") { listState ->
-        compose.onNodeWithContentDescription("Spotify").requestFocus()
-        compose.mainClock.advanceTimeBy(600)
-        compose.runOnIdle { runBlocking { listState.scrollToItem(2) } }
+    fun upFromFavoritesReachesSettings() {
+        render()
+        focus("YouTube")
+        press(Key.DirectionUp)
+        compose.onNodeWithContentDescription("Settings").assertIsFocused()
+        assertAtTop()
+        capture("settings")
     }
 
-    private fun render(name: String, after: (LazyListState) -> Unit = {}) {
+    @Test
+    fun downFromFavoritesEntersGrid() {
+        render()
+        focus("YouTube")
+        press(Key.DirectionDown)
+        compose.onNodeWithContentDescription("Max").assertIsFocused()
+        press(Key.DirectionRight, times = 4)
+        compose.onNodeWithContentDescription("Spotify").assertIsFocused()
+        capture("grid")
+    }
+
+    @Test
+    fun upFromGridReturnsToFavorites() {
+        render()
+        focus("YouTube")
+        press(Key.DirectionDown)
+        press(Key.DirectionUp)
+        compose.onNodeWithContentDescription("YouTube").assertIsFocused()
+        assertAtTop()
+        capture("back-up")
+    }
+
+    private fun focus(app: String) {
+        compose.onNodeWithContentDescription(app).requestFocus()
+        settle()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun press(key: Key, times: Int = 1) = repeat(times) {
+        compose.onRoot().performKeyInput { pressKey(key) }
+        settle()
+    }
+
+    private fun settle() {
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+    }
+
+    private fun assertAtTop() {
+        compose.runOnIdle {
+            assertEquals("list should not scroll while on the top row", 0, listState.firstVisibleItemIndex)
+            assertEquals("list should not scroll while on the top row", 0, listState.firstVisibleItemScrollOffset)
+        }
+    }
+
+    private fun capture(name: String) = compose.onRoot().captureRoboImage("build/previews/$name.png")
+
+    private fun render() {
         val apps = sampleApps()
         val favorites = apps.take(4)
         val layout = Catalog.Layout(favorites = favorites, others = apps.drop(4), hidden = emptyList())
-        val listState = LazyListState()
+        listState = LazyListState()
         val photo = javaClass.getResourceAsStream("/preview/landscape.jpg")!!.use { BitmapFactory.decodeStream(it) }
         val frame = Frame(photo.asImageBitmap(), Photos.Photo("", "Sunset over the range", "Sample image"))
         val now = Calendar.getInstance().apply { set(2026, 10, 6, 19, 42) }.time
@@ -86,10 +152,7 @@ class HomePreviewTest {
                 }
             }
         }
-        compose.mainClock.advanceTimeBy(1_000)
-        after(listState)
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.onRoot().captureRoboImage("build/previews/$name.png")
+        settle()
     }
 
     /** Stand-ins for real app banners: a brand-ish colour with the app's name. */
