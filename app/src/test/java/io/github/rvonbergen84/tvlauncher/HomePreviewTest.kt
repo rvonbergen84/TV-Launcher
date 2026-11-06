@@ -46,6 +46,11 @@ class HomePreviewTest {
     }
 
     @Test
+    fun settingsFocused() = render("settings") {
+        compose.onNodeWithContentDescription("Settings").requestFocus()
+    }
+
+    @Test
     fun grid() = render("grid") { listState ->
         compose.onNodeWithContentDescription("Spotify").requestFocus()
         compose.mainClock.advanceTimeBy(600)

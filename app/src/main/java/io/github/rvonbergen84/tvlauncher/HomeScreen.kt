@@ -26,6 +26,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -60,7 +62,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.Border
 import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Icon
+import androidx.tv.material3.IconButton
+import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Text
@@ -216,7 +220,7 @@ fun HomeContent(
             }
             if (layout.others.isNotEmpty()) {
                 item(key = "apps-title") {
-                    SectionTitle("Apps", hint = "Hold OK on an app to move, favorite or hide it")
+                    SectionTitle("Apps")
                 }
                 items(layout.others.chunked(GRID_COLUMNS), key = { row -> row.first().packageName }) { row ->
                     Row(
@@ -279,7 +283,7 @@ private fun rememberPhotoFrame(photos: List<Photos.Photo>): Frame? {
 
 @Composable
 private fun Backdrop(frame: Frame?, dimmed: Boolean) {
-    val dim by animateFloatAsState(if (dimmed) 0.7f else 0f, tween(500), label = "dim")
+    val dim by animateFloatAsState(if (dimmed) 0.6f else 0f, tween(500), label = "dim")
     Box(Modifier.fillMaxSize()) {
         Crossfade(targetState = frame, animationSpec = tween(1500), label = "photo") { f ->
             if (f != null) {
@@ -295,15 +299,15 @@ private fun Backdrop(frame: Frame?, dimmed: Boolean) {
         // Keeps the clock readable on bright photos.
         Box(
             Modifier.fillMaxWidth().height(200.dp).background(
-                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)),
+                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent)),
             ),
         )
         // Keeps the app row readable.
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    0.45f to Color.Transparent,
-                    1f to Color.Black.copy(alpha = 0.85f),
+                    0.5f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.7f),
                 ),
             ),
         )
@@ -415,24 +419,24 @@ private fun TopOverlay(now: Date, weather: Weather.Now?, place: Prefs.Place?, hi
             }
         }
         Spacer(Modifier.weight(1f))
-        Button(
+        IconButton(
             onClick = onOpenSetup,
-            colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = 0.25f), contentColor = Color.White),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            colors = IconButtonDefaults.colors(
+                containerColor = Color.Black.copy(alpha = 0.2f),
+                contentColor = Color.White.copy(alpha = 0.85f),
+                focusedContainerColor = Color.White,
+                focusedContentColor = Color.Black,
+            ),
             modifier = Modifier.focusProperties { canFocus = !hidden },
-        ) { Text("Settings", fontSize = 14.sp) }
+        ) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
     }
 }
 
 // ---------- Tiles ----------
 
 @Composable
-private fun SectionTitle(text: String, hint: String? = null) {
-    Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
-        Text(text, fontSize = 18.sp, color = Muted)
-        Spacer(Modifier.weight(1f))
-        if (hint != null) Text(hint, fontSize = 12.sp, color = Muted.copy(alpha = 0.7f))
-    }
+private fun SectionTitle(text: String) {
+    Text(text, fontSize = 18.sp, color = Muted, modifier = Modifier.padding(top = 20.dp, bottom = 10.dp))
 }
 
 @Composable
