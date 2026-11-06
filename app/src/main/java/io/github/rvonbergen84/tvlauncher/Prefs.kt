@@ -18,6 +18,7 @@ object Prefs {
     private const val KEY_BYPASS_UNTIL = "bypass_until"
     private const val KEY_FAVORITES = "favorites"
     private const val KEY_HIDDEN = "hidden"
+    private const val KEY_ORDER = "order"
     private const val KEY_PLACE_NAME = "place_name"
     private const val KEY_PLACE_LAT = "place_lat"
     private const val KEY_PLACE_LON = "place_lon"
@@ -27,6 +28,7 @@ object Prefs {
     private const val MAX_LOG_LINES = 40
 
     const val FAVORITE_SLOTS = 5
+    const val SECOND_ROW_SLOTS = 6
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -51,13 +53,23 @@ object Prefs {
 
     // --- Apps ---
 
-    /** Ordered package names for the top row, or null if the user hasn't picked any yet. */
+    /** Favourites list from before 0.10; read once to carry the user's top row over. */
     fun favorites(context: Context): List<String>? =
         prefs(context).getString(KEY_FAVORITES, null)?.split(',')?.filter { it.isNotBlank() }
-    fun setFavorites(context: Context, packages: List<String>) =
-        prefs(context).edit().putString(KEY_FAVORITES, packages.joinToString(",")).apply()
 
-    fun resetFavorites(context: Context) = prefs(context).edit().remove(KEY_FAVORITES).apply()
+    /** Order of everything on the home screen (apps and inputs), or null if never arranged. */
+    fun order(context: Context): List<String>? =
+        prefs(context).getString(KEY_ORDER, null)?.split(',')?.filter { it.isNotBlank() }
+    fun setOrder(context: Context, keys: List<String>) =
+        prefs(context).edit().putString(KEY_ORDER, keys.joinToString(",")).apply()
+    fun resetOrder(context: Context) =
+        prefs(context).edit().remove(KEY_ORDER).remove(KEY_FAVORITES).apply()
+
+    /** The user's own name for a tile, e.g. "Xbox" for HDMI 4. */
+    fun tileName(context: Context, key: String): String? =
+        prefs(context).getString("name:$key", null)?.takeIf { it.isNotBlank() }
+    fun setTileName(context: Context, key: String, name: String) =
+        prefs(context).edit().putString("name:$key", name.trim()).apply()
 
     fun hidden(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_HIDDEN, emptySet())!!.toSet()

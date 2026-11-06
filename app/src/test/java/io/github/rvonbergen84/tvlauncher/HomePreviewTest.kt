@@ -27,6 +27,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -61,15 +62,15 @@ class HomePreviewTest {
     @Test
     fun home() {
         render()
-        focus("YouTube")
+        focus("Netflix")
         assertAtTop()
         capture("home")
     }
 
     @Test
-    fun upFromFavoritesReachesSettings() {
+    fun upFromTopRowReachesSettings() {
         render()
-        focus("YouTube")
+        focus("Netflix")
         press(Key.DirectionUp)
         compose.onNodeWithContentDescription("Settings").assertIsFocused()
         assertAtTop()
@@ -77,49 +78,51 @@ class HomePreviewTest {
     }
 
     @Test
-    fun downFromFavoritesEntersGrid() {
+    fun downFromSettingsReturnsToTopRow() {
         render()
         focus("YouTube")
-        press(Key.DirectionDown)
-        compose.onNodeWithContentDescription("Hulu").assertIsFocused()
-        press(Key.DirectionRight, times = 3)
-        compose.onNodeWithContentDescription("Spotify").assertIsFocused()
-        capture("grid")
-    }
-
-    @Test
-    fun upFromGridReturnsToFavorites() {
-        render()
-        focus("YouTube")
-        press(Key.DirectionDown)
         press(Key.DirectionUp)
+        press(Key.DirectionDown)
         compose.onNodeWithContentDescription("YouTube").assertIsFocused()
         assertAtTop()
-        capture("back-up")
     }
 
     @Test
-    fun downFromSettingsReturnsToFavorites() {
+    fun secondRowNeedsNoScrolling() {
         render()
         focus("Netflix")
-        press(Key.DirectionUp)
-        compose.onNodeWithContentDescription("Settings").assertIsFocused()
         press(Key.DirectionDown)
-        compose.onNodeWithContentDescription("Netflix").assertIsFocused()
+        compose.onNodeWithContentDescription("Hulu").assertIsFocused()
+        assertAtTop()
+        press(Key.DirectionRight, times = 4)
+        compose.onNodeWithContentDescription("Xbox").assertIsFocused()
+        assertAtTop()
+        capture("xbox")
+        press(Key.DirectionUp)
         assertAtTop()
     }
 
     @Test
     fun repeatedDownAndUpEndsAtTop() {
-        render()
-        focus("YouTube")
+        render(extraApps = true)
+        focus("Netflix")
         for (gap in listOf(400L, 120L, 50L)) {
             repeat(3) { pressQuick(Key.DirectionDown, gap) }
             repeat(3) { pressQuick(Key.DirectionUp, gap) }
         }
         settle()
         assertAtTop()
-        capture("after-down-up")
+    }
+
+    @Test
+    fun extraAppsGoInMore() {
+        render(extraApps = true)
+        focus("Netflix")
+        press(Key.DirectionDown)
+        press(Key.DirectionDown)
+        compose.onNodeWithContentDescription("Spotify").assertIsFocused()
+        compose.runOnIdle { assertTrue("More should scroll up", listState.firstVisibleItemIndex > 0) }
+        capture("more")
     }
 
     /** A press at remote speed: only a few frames pass before the next one. */
@@ -154,10 +157,14 @@ class HomePreviewTest {
 
     private fun capture(name: String) = compose.onRoot().captureRoboImage("build/previews/$name.png")
 
-    private fun render() {
-        val apps = sampleApps()
-        val favorites = apps.take(5)
-        val layout = Catalog.Layout(favorites = favorites, others = apps.drop(5), hidden = emptyList())
+    private fun render(extraApps: Boolean = false) {
+        val tiles = sampleTiles(extraApps)
+        val layout = Catalog.Layout(
+            top = tiles.take(5),
+            second = tiles.drop(5).take(6),
+            more = tiles.drop(11),
+            hidden = emptyList(),
+        )
         listState = LazyListState()
         val photo = javaClass.getResourceAsStream("/preview/landscape.jpg")!!.use { BitmapFactory.decodeStream(it) }
         val image = photo.asImageBitmap()
@@ -170,7 +177,6 @@ class HomePreviewTest {
                 Box(Modifier.fillMaxSize().background(Background)) {
                     HomeContent(
                         layout = layout,
-                        inputs = listOf(InputEntry("1", "HDMI 1"), InputEntry("2", "PlayStation"), InputEntry("3", "HDMI 3")),
                         serviceOn = true,
                         frame = frame,
                         now = now,
@@ -179,7 +185,7 @@ class HomePreviewTest {
                         listState = listState,
                         firstFavorite = FocusRequester(),
                         onOpenSetup = {},
-                        onAppMenu = {},
+                        onTileMenu = {},
                     )
                 }
             }
@@ -187,21 +193,22 @@ class HomePreviewTest {
         settle()
     }
 
-    /** Stand-ins for real app banners: a brand-ish colour with the app's name. */
-    private fun sampleApps(): List<AppEntry> = listOf(
-        "YouTube" to 0xFFCC0000, "Netflix" to 0xFF141414, "Prime Video" to 0xFF0F79AF, "Disney+" to 0xFF0B1F5C,
-        "Max" to 0xFF002BE7, "Hulu" to 0xFF1CE783, "Apple TV" to 0xFF000000, "Plex" to 0xFF1F1F1F,
-        "Spotify" to 0xFF1DB954, "YouTube Music" to 0xFF212121, "Peacock" to 0xFF000000, "Paramount+" to 0xFF0064FF,
-        "Pluto TV" to 0xFF2C2C2C, "Tubi" to 0xFF7408FF, "PBS" to 0xFF2638C4, "Twitch" to 0xFF9146FF,
-        "Sony Select" to 0L, "Files" to 0L, "Downloader" to 0L,
-    ).map { (label, color) ->
-        val hasBanner = color != 0L
-        AppEntry(
-            packageName = "sample.${label.lowercase().replace(Regex("[^a-z]"), "")}",
-            label = label,
-            image = if (hasBanner) banner(label, color.toInt()) else icon(),
-            hasBanner = hasBanner,
+    /** The household's 9 apps and 2 consoles, in the default order. Banners are stand-ins. */
+    private fun sampleTiles(extraApps: Boolean): List<Tile> {
+        val apps = listOf(
+            "Netflix" to 0xFF141414, "YouTube" to 0xFFCC0000, "HBO Max" to 0xFF002BE7,
+            "Prime Video" to 0xFF0F79AF, "Plex" to 0xFF1F1F1F, "Hulu" to 0xFF1CE783,
+            "Peacock" to 0xFF000000, "Apple TV" to 0xFF000000, "Paramount+" to 0xFF0064FF,
+        ) + if (extraApps) listOf("Spotify" to 0xFF1DB954, "Tubi" to 0xFF7408FF, "PBS" to 0xFF2638C4) else emptyList()
+        val appTiles = apps.map { (label, color) ->
+            Tile("sample.${label.lowercase().replace(Regex("[^a-z]"), "")}", label, banner(label, color.toInt()), true)
+        }
+        val consoles = listOf(
+            Tile("input:hdmi4", "Xbox", inputId = "hdmi4", detail = "HDMI 4"),
+            Tile("input:hdmi1", "Switch", inputId = "hdmi1", detail = "HDMI 1"),
         )
+        // Default order puts the 9 apps first, then the consoles; extras land in "More".
+        return appTiles.take(9) + consoles + appTiles.drop(9)
     }
 
     private fun banner(label: String, color: Int): Bitmap {

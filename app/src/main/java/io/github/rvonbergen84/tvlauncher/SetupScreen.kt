@@ -58,7 +58,7 @@ fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
     var fahrenheit by remember { mutableStateOf(Prefs.fahrenheit(context)) }
     var photoSource by remember { mutableStateOf(Prefs.photoSource(context)) }
     var photoSeconds by remember { mutableStateOf(Prefs.photoSeconds(context)) }
-    var hidden by remember { mutableStateOf(Catalog.arrange(context, Catalog.lastApps).hidden) }
+    var hidden by remember { mutableStateOf(Catalog.arrange(context, Catalog.lastApps, Catalog.lastInputs).hidden) }
     var editingPlace by remember { mutableStateOf(false) }
     val installed = remember { Updater.installedVersion(context) }
     var latest by remember { mutableStateOf<Updater.Release?>(null) }
@@ -118,17 +118,17 @@ fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
             item { Heading("Apps") }
             item {
                 Button(onClick = {
-                    Prefs.resetFavorites(context)
-                    toast(context, "Top row reset.")
-                }) { Text("Reset top row to default") }
+                    Prefs.resetOrder(context)
+                    toast(context, "Home screen order reset.")
+                }) { Text("Reset home screen order") }
             }
             if (hidden.isEmpty()) {
-                item { Text("No hidden apps. Hold OK on an app to hide it.", color = Muted, fontSize = 14.sp) }
+                item { Text("Nothing hidden. Hold OK on a tile to hide it.", color = Muted, fontSize = 14.sp) }
             }
             hidden.forEach { app ->
                 item {
                     Button(onClick = {
-                        Prefs.setHidden(context, Prefs.hidden(context) - app.packageName)
+                        Prefs.setHidden(context, Prefs.hidden(context) - app.key)
                         hidden = hidden - app
                     }) { Text("Show ${app.label} again") }
                 }

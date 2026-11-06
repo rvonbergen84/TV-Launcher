@@ -11,6 +11,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -108,11 +116,12 @@ private object WeatherMemory {
 fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
     val context = LocalContext.current
     var apps by remember { mutableStateOf(Catalog.lastApps) }
-    var inputs by remember { mutableStateOf<List<InputEntry>>(emptyList()) }
+    var inputs by remember { mutableStateOf(Catalog.lastInputs) }
     var editTick by remember { mutableIntStateOf(0) }
-    val layout = remember(apps, editTick) { Catalog.arrange(context, apps) }
+    val layout = remember(apps, inputs, editTick) { Catalog.arrange(context, apps, inputs) }
     var serviceOn by remember { mutableStateOf(true) }
-    var menuFor by remember { mutableStateOf<AppEntry?>(null) }
+    var menuFor by remember { mutableStateOf<Tile?>(null) }
+    var renaming by remember { mutableStateOf<Tile?>(null) }
     var photos by remember { mutableStateOf(Photos.cachedOnly(context)) }
     val frame = rememberPhotoFrame(photos)
     val place = remember { Prefs.place(context) }
@@ -142,7 +151,6 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
 
     HomeContent(
         layout = layout,
-        inputs = inputs,
         serviceOn = serviceOn,
         frame = frame,
         now = now,
@@ -151,18 +159,29 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
         listState = listState,
         firstFavorite = firstFavorite,
         onOpenSetup = onOpenSetup,
-        onAppMenu = { menuFor = it },
+        onTileMenu = { menuFor = it },
     )
 
-    menuFor?.let { app ->
-        AppMenu(
-            app = app,
-            favorites = layout.favorites.map { it.packageName },
+    menuFor?.let { tile ->
+        TileMenu(
+            tile = tile,
+            order = layout.visible.map { it.key },
+            hiddenKeys = layout.hidden.map { it.key },
+            onRename = {
+                menuFor = null
+                renaming = tile
+            },
             onDone = { changed ->
                 menuFor = null
                 if (changed) editTick++
             },
         )
+    }
+    renaming?.let { tile ->
+        RenameDialog(tile) { changed ->
+            renaming = null
+            if (changed) editTick++
+        }
     }
 }
 
@@ -171,7 +190,6 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
 @Composable
 fun HomeContent(
     layout: Catalog.Layout,
-    inputs: List<InputEntry>,
     serviceOn: Boolean,
     frame: Frame?,
     now: Date,
@@ -180,129 +198,133 @@ fun HomeContent(
     listState: LazyListState,
     firstFavorite: FocusRequester,
     onOpenSetup: () -> Unit,
-    onAppMenu: (AppEntry) -> Unit,
+    onTileMenu: (Tile) -> Unit,
 ) {
-    LaunchedEffect(layout.favorites.isNotEmpty()) {
-        if (layout.favorites.isNotEmpty()) runCatching { firstFavorite.requestFocus() }
+    LaunchedEffect(layout.top.isNotEmpty()) {
+        if (layout.top.isNotEmpty()) runCatching { firstFavorite.requestFocus() }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val favGap = 24.dp
-        val gridGap = 20.dp
+        val topGap = 24.dp
+        val rowGap = 20.dp
         val content = maxWidth - (SIDE * 2).dp
-        val favWidth = (content - favGap * (Prefs.FAVORITE_SLOTS - 1)) / Prefs.FAVORITE_SLOTS
-        val gridWidth = (content - gridGap * (GRID_COLUMNS - 1)) / GRID_COLUMNS
-        val heroHeight = maxHeight - favWidth * 9f / 16f - 96.dp
-        // Which part of the screen has focus. The top row keeps the photo sharp and
-        // the clock showing; anything below it blurs and dims the photo.
-        var inGrid by remember { mutableStateOf(false) }
+        val topWidth = (content - topGap * (Prefs.FAVORITE_SLOTS - 1)) / Prefs.FAVORITE_SLOTS
+        val smallWidth = (content - rowGap * (GRID_COLUMNS - 1)) / GRID_COLUMNS
+        // Room under each row for the name of the selected tile.
+        val labelSpace = 30.dp
+        val rowsHeight = topWidth * 9f / 16f + labelSpace +
+            (if (layout.second.isNotEmpty()) smallWidth * 9f / 16f + labelSpace else 0.dp)
+        val heroHeight = maxHeight - rowsHeight - 24.dp
+
+        // Both main rows sit on the photo with nothing scrolling. Only the "More" area,
+        // for anything beyond 11 tiles, scrolls up and blurs the photo.
+        var inMore by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
-        val appsTitleIndex = if (serviceOn) 2 else 3 // after hero, favorites, [warning]
-        val onFavoritesFocus = Modifier.onFocusChanged {
+        val moreTitleIndex = if (serviceOn) 2 else 3 // after hero, rows, [warning]
+        val onRowsFocus = Modifier.onFocusChanged {
             if (it.hasFocus) {
-                inGrid = false
+                inMore = false
                 scope.launch { listState.animateScrollToItem(0) }
             }
         }
-        // The TV's own "keep the selected tile in view" scroll can land after ours and
-        // leave the top row near the top of the screen. Whenever the top row has focus
-        // and scrolling stops anywhere but the top, go back to the top.
-        LaunchedEffect(inGrid) {
-            if (inGrid) return@LaunchedEffect
+        val onMoreFocus = Modifier.onFocusChanged {
+            if (it.hasFocus && !inMore) {
+                inMore = true
+                scope.launch { listState.animateScrollToItem(moreTitleIndex) }
+            }
+        }
+        // The TV's own "keep the selected tile in view" scroll can land after ours. While
+        // the main rows have focus, any scroll that stops away from the top goes back.
+        LaunchedEffect(inMore) {
+            if (inMore) return@LaunchedEffect
             snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
                 val atTop = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
                 if (!scrolling && !atTop) listState.animateScrollToItem(0)
             }
         }
-        // Remember which favourite was last selected, so Down from the gear lands on it.
-        val favoriteFocus = remember(layout.favorites.size) { List(layout.favorites.size) { FocusRequester() } }
-        var lastFavorite by remember { mutableIntStateOf(0) }
-        val onGridFocus = Modifier.onFocusChanged {
-            if (it.hasFocus && !inGrid) {
-                inGrid = true
-                scope.launch { listState.animateScrollToItem(appsTitleIndex) }
-            }
-        }
+        // Remember which top-row tile was last selected, so Down from the gear lands on it.
+        val topFocus = remember(layout.top.size) { List(layout.top.size) { FocusRequester() } }
+        var lastTop by remember { mutableIntStateOf(0) }
 
-        // 0 on the top row, 1 in the grid. Drives the blur, dim and fades together.
-        val gridAmount = animateFloatAsState(if (inGrid) 1f else 0f, tween(400), label = "grid")
-        Backdrop(frame, gridAmount)
+        // 0 on the main rows, 1 in "More". Drives the blur, dim and fades together.
+        val moreAmount = animateFloatAsState(if (inMore) 1f else 0f, tween(400), label = "more")
+        Backdrop(frame, moreAmount)
 
-        // TVs default to scrolling the selected item a third of the way down the screen,
-        // which pushed the top row up. Only scroll as much as needed to keep it in view.
+        // TVs default to scrolling the selected item a third of the way down the screen.
+        // Only scroll as much as needed to keep it in view.
         CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) {
-        LazyColumn(
-            state = listState,
-            // Room at the end so the grid can always scroll the top row fully off screen.
-            contentPadding = PaddingValues(start = SIDE.dp, end = SIDE.dp, bottom = maxHeight / 2),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            item(key = "hero") {
-                Box(Modifier.fillMaxWidth().height(heroHeight)) {
-                    frame?.let {
-                        Caption(
-                            it.photo,
-                            Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)
-                                .graphicsLayer { alpha = 1f - gridAmount.value },
+            LazyColumn(
+                state = listState,
+                // Room at the end so "More" can scroll the main rows fully off screen.
+                contentPadding = PaddingValues(
+                    start = SIDE.dp,
+                    end = SIDE.dp,
+                    bottom = if (layout.more.isNotEmpty()) maxHeight / 2 else 0.dp,
+                ),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                item(key = "hero") {
+                    Box(Modifier.fillMaxWidth().height(heroHeight)) {
+                        frame?.let {
+                            Caption(
+                                it.photo,
+                                Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)
+                                    .graphicsLayer { alpha = 1f - moreAmount.value },
+                            )
+                        }
+                    }
+                }
+                item(key = "rows") {
+                    Column(onRowsFocus) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(topGap)) {
+                            layout.top.forEachIndexed { index, tile ->
+                                TileCard(
+                                    tile = tile,
+                                    width = topWidth,
+                                    modifier = Modifier
+                                        .then(if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier)
+                                        .focusRequester(topFocus[index])
+                                        .onFocusChanged { if (it.isFocused) lastTop = index },
+                                    onLongClick = { onTileMenu(tile) },
+                                )
+                            }
+                        }
+                        if (layout.second.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(rowGap)) {
+                                layout.second.forEach { tile ->
+                                    TileCard(tile, smallWidth, Modifier, onLongClick = { onTileMenu(tile) })
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!serviceOn) {
+                    item(key = "warning") {
+                        Text(
+                            "The Home button isn't connected. Open Settings at the top right to turn it on.",
+                            color = Warning,
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
                 }
-            }
-            item(key = "favorites") {
-                Row(horizontalArrangement = Arrangement.spacedBy(favGap), modifier = onFavoritesFocus) {
-                    layout.favorites.forEachIndexed { index, app ->
-                        AppTile(
-                            app = app,
-                            width = favWidth,
-                            modifier = Modifier
-                                .then(if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier)
-                                .focusRequester(favoriteFocus[index])
-                                .onFocusChanged { if (it.isFocused) lastFavorite = index },
-                            onLongClick = { onAppMenu(app) },
-                        )
-                    }
-                }
-            }
-            if (!serviceOn) {
-                item(key = "warning") {
-                    Text(
-                        "The Home button isn't connected. Open Settings at the top right to turn it on.",
-                        color = Warning,
-                        fontSize = 15.sp,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-            }
-            if (layout.others.isNotEmpty()) {
-                item(key = "apps-title") {
-                    SectionTitle("Apps")
-                }
-                items(layout.others.chunked(GRID_COLUMNS), key = { row -> row.first().packageName }) { row ->
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(gridGap),
-                        modifier = onGridFocus.padding(bottom = 4.dp),
-                    ) {
-                        row.forEach { app -> AppTile(app, gridWidth, Modifier, onLongClick = { onAppMenu(app) }) }
-                    }
-                }
-            }
-            if (inputs.isNotEmpty()) {
-                item(key = "inputs") {
-                    Column(onGridFocus) {
-                        SectionTitle("Inputs")
-                        Row(horizontalArrangement = Arrangement.spacedBy(gridGap)) {
-                            inputs.forEach { InputTile(it, gridWidth) }
+                if (layout.more.isNotEmpty()) {
+                    item(key = "more-title") { SectionTitle("More") }
+                    items(layout.more.chunked(GRID_COLUMNS), key = { row -> row.first().key }) { row ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(rowGap),
+                            modifier = onMoreFocus.padding(bottom = 4.dp),
+                        ) {
+                            row.forEach { tile -> TileCard(tile, smallWidth, Modifier, onLongClick = { onTileMenu(tile) }) }
                         }
                     }
                 }
             }
         }
 
-        }
-
         TopOverlay(
-            now, weather, place, hidden = inGrid, gridAmount = gridAmount,
-            downTo = favoriteFocus.getOrNull(lastFavorite) ?: firstFavorite,
+            now, weather, place, hidden = inMore, gridAmount = moreAmount,
+            downTo = topFocus.getOrNull(lastTop) ?: firstFavorite,
             onOpenSetup = onOpenSetup,
         )
     }
@@ -601,13 +623,15 @@ private fun tileBorder() = CardDefaults.border(
 )
 
 @Composable
-private fun AppTile(app: AppEntry, width: Dp, modifier: Modifier, onLongClick: () -> Unit) {
+private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () -> Unit) {
     val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(width)) {
         Card(
             onClick = {
-                if (!Catalog.launchApp(context, app.packageName)) toast(context, "Couldn't open ${app.label}.")
+                if (!Catalog.open(context, tile)) {
+                    toast(context, if (tile.isInput) "This TV didn't accept the input switch." else "Couldn't open ${tile.label}.")
+                }
             },
             onLongClick = onLongClick,
             shape = CardDefaults.shape(TileShape),
@@ -618,17 +642,38 @@ private fun AppTile(app: AppEntry, width: Dp, modifier: Modifier, onLongClick: (
                 .height(width * 9f / 16f)
                 .onFocusChanged { focused = it.isFocused },
         ) {
-            val bitmap = app.image
-            if (bitmap != null && app.hasBanner) {
-                Image(
+            val bitmap = tile.image
+            when {
+                bitmap != null && tile.hasBanner -> Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = app.label,
+                    contentDescription = tile.label,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                Column(
-                    Modifier.fillMaxSize(),
+                // Inputs: the name big (e.g. "Xbox"), the port small underneath.
+                tile.isInput -> Column(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Brush.verticalGradient(listOf(Color(0xFF2A3346), Color(0xFF1A2030))))
+                        .semantics { contentDescription = tile.label },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        tile.label,
+                        fontSize = (width.value / 7f).coerceIn(14f, 22f).sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                    tile.detail?.let {
+                        Text(it, fontSize = 11.sp, color = Muted, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+                else -> Column(
+                    Modifier.fillMaxSize().semantics { contentDescription = tile.label },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
@@ -637,7 +682,7 @@ private fun AppTile(app: AppEntry, width: Dp, modifier: Modifier, onLongClick: (
                         Spacer(Modifier.height(6.dp))
                     }
                     Text(
-                        app.label,
+                        tile.label,
                         fontSize = 13.sp,
                         color = Color.White,
                         maxLines = 1,
@@ -647,75 +692,62 @@ private fun AppTile(app: AppEntry, width: Dp, modifier: Modifier, onLongClick: (
                 }
             }
         }
-        // Name under the focused tile only, so the screen stays clean.
+        // Name under the selected tile only, so the screen stays clean.
         Text(
-            app.label,
+            tile.label,
             fontSize = 13.sp,
             color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = TextStyle(shadow = TextShadow),
-            modifier = Modifier.padding(top = 10.dp).alpha(if (focused) 1f else 0f),
+            modifier = Modifier.padding(top = 8.dp).alpha(if (focused) 1f else 0f),
         )
-    }
-}
-
-@Composable
-private fun InputTile(input: InputEntry, width: Dp) {
-    val context = LocalContext.current
-    Card(
-        onClick = {
-            if (!Catalog.switchToInput(context, input.id)) toast(context, "This TV didn't accept the input switch.")
-        },
-        shape = CardDefaults.shape(TileShape),
-        border = tileBorder(),
-        colors = CardDefaults.colors(containerColor = Color(0xFF1E2533)),
-        modifier = Modifier.width(width).height(56.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(input.label, fontSize = 15.sp, color = Color.White, maxLines = 1)
-        }
     }
 }
 
 // ---------- Hold-OK menu ----------
 
+/**
+ * Options for one tile. [order] is every visible tile in screen order: the first 5 are
+ * the top row, the next 6 the second row, the rest "More".
+ */
 @Composable
-internal fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: Boolean) -> Unit) {
+internal fun TileMenu(
+    tile: Tile,
+    order: List<String>,
+    hiddenKeys: List<String>,
+    onRename: () -> Unit,
+    onDone: (changed: Boolean) -> Unit,
+) {
     val context = LocalContext.current
-    val index = favorites.indexOf(app.packageName)
-    val isFavorite = index >= 0
+    val index = order.indexOf(tile.key)
+    val top = Prefs.FAVORITE_SLOTS
+    val endOfSecond = top + Prefs.SECOND_ROW_SLOTS
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
 
-    fun save(list: List<String>) {
-        Prefs.setFavorites(context, list)
+    fun moveTo(target: Int) {
+        val list = order.toMutableList()
+        list.removeAt(index)
+        list.add(target.coerceIn(0, list.size), tile.key)
+        Prefs.setOrder(context, list + hiddenKeys)
         onDone(true)
     }
 
     val actions = buildList<Pair<String, () -> Unit>> {
-        if (isFavorite) {
-            if (index > 0) add("Move left" to {
-                save(favorites.toMutableList().apply { add(index - 1, removeAt(index)) })
-            })
-            if (index < favorites.size - 1) add("Move right" to {
-                save(favorites.toMutableList().apply { add(index + 1, removeAt(index)) })
-            })
-            add("Remove from top row" to { save(favorites - app.packageName) })
-        } else {
-            add("Add to top row" to {
-                if (favorites.size >= Prefs.FAVORITE_SLOTS) {
-                    toast(context, "The top row holds ${Prefs.FAVORITE_SLOTS} apps. Remove one first.")
-                    onDone(false)
-                } else {
-                    save(favorites + app.packageName)
-                }
-            })
+        if (index > 0) add("Move left" to { moveTo(index - 1) })
+        if (index < order.size - 1) add("Move right" to { moveTo(index + 1) })
+        when {
+            // Out of the top row: it becomes the first tile of the second row.
+            index < top -> if (order.size > top) add("Move to second row" to { moveTo(top) })
+            // Into the top row as its last tile; that row's last tile drops to the second row.
+            else -> add("Move to top row" to { moveTo(top - 1) })
         }
-        add("Hide app" to {
-            Prefs.setHidden(context, Prefs.hidden(context) + app.packageName)
-            if (isFavorite) Prefs.setFavorites(context, favorites - app.packageName)
-            toast(context, "${app.label} hidden. Show it again from Settings.")
+        if (index >= endOfSecond) add("Move to second row" to { moveTo(endOfSecond - 1) })
+        if (tile.isInput) add("Rename" to onRename)
+        add("Hide" to {
+            Prefs.setHidden(context, Prefs.hidden(context) + tile.key)
+            toast(context, "${tile.label} hidden. Show it again from Settings.")
             onDone(true)
         })
         add("Cancel" to { onDone(false) })
@@ -741,12 +773,54 @@ internal fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: B
                 .background(Color(0xFF1A202B), RoundedCornerShape(16.dp)).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(app.label, fontSize = 20.sp, color = Color.White, modifier = Modifier.padding(bottom = 6.dp))
+            Text(tile.label, fontSize = 20.sp, color = Color.White, modifier = Modifier.padding(bottom = 6.dp))
             actions.forEachIndexed { i, (label, action) ->
                 Button(
                     onClick = action,
                     modifier = Modifier.width(260.dp).then(if (i == 0) Modifier.focusRequester(first) else Modifier),
                 ) { Text(label) }
+            }
+        }
+    }
+}
+
+/** Lets the user name an input, e.g. HDMI 4 -> "Xbox". Empty restores the TV's name. */
+@Composable
+private fun RenameDialog(tile: Tile, onDone: (changed: Boolean) -> Unit) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf(tile.label) }
+    val field = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { field.requestFocus() } }
+
+    fun save() {
+        Prefs.setTileName(context, tile.key, text)
+        onDone(true)
+    }
+
+    Dialog(onDismissRequest = { onDone(false) }) {
+        Column(
+            Modifier.background(Color(0xFF1A202B), RoundedCornerShape(16.dp)).padding(24.dp).width(420.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Rename ${tile.detail ?: tile.label}", fontSize = 20.sp, color = Color.White)
+            Text("For example Xbox or Switch. Leave empty to use the TV's name.", fontSize = 14.sp, color = Muted)
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it.take(24) },
+                singleLine = true,
+                textStyle = TextStyle(color = Color.White, fontSize = 18.sp),
+                cursorBrush = SolidColor(Color.White),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { save() }),
+                modifier = Modifier
+                    .focusRequester(field)
+                    .border(1.dp, Muted, RoundedCornerShape(8.dp))
+                    .padding(12.dp)
+                    .width(372.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { save() }) { Text("Save") }
+                Button(onClick = { onDone(false) }) { Text("Cancel") }
             }
         }
     }

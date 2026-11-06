@@ -29,9 +29,11 @@ class AppMenuTest {
     private fun open() {
         compose.setContent {
             MaterialTheme {
-                AppMenu(
-                    AppEntry("sample.youtube", "YouTube", null, false),
-                    favorites = listOf("sample.youtube", "sample.netflix"),
+                TileMenu(
+                    Tile("sample.netflix", "Netflix"),
+                    order = listOf("sample.netflix", "sample.youtube"),
+                    hiddenKeys = emptyList(),
+                    onRename = {},
                 ) { result = it }
             }
         }
