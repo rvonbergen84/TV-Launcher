@@ -16,10 +16,14 @@ app take over the remote's Home button. The UI is deliberately basic.
 
 ## Install on the TV (no computer needed)
 1. On the TV, install **Downloader** (by AFTVnews) from the Play Store.
-2. Allow it to install apps: Settings → Apps → Security & restrictions → Unknown sources → Downloader → On.
-3. In Downloader, enter this URL (the Google TV app on your phone has a keyboard for typing it):
+2. In Downloader, enter this URL (the Google TV app on your phone has a keyboard for typing it):
    `https://raw.githubusercontent.com/rvonbergen84/tv-launcher/claude/home-button-spike/dist/tv-launcher.apk`
-4. Install, then open **TV Launcher** from your apps.
+3. When the TV blocks the install, choose **Settings** on the prompt, turn on
+   "Allow from this source" for Downloader, go back, and choose **Install**.
+   (Menu paths differ by brand. On Sony it's usually Settings → Privacy → Security & restrictions,
+   or Settings → Apps → Special app access → Install unknown apps. The list only shows
+   apps that can install others, so Downloader has to be installed first.)
+4. Open **TV Launcher** from your apps.
 
 ## Test
 1. Open **Setup** → **Turn on the Home button service** → turn on "TV Launcher Home button".
