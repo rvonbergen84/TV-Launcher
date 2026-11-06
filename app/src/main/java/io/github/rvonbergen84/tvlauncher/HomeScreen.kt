@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -249,7 +250,24 @@ fun HomeContent(
 
 // ---------- Background photo ----------
 
-class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo)
+class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo) {
+    /** Soft blurred copy, shown behind the app grid. Made once per photo. */
+    val blurred: ImageBitmap by lazy { softBlur(bitmap) }
+}
+
+/**
+ * Cheap blur that works on every Android version: shrink the photo a lot, then let
+ * smooth scaling stretch it back up. (Compose's blur() needs Android 12 or newer.)
+ */
+private fun softBlur(source: ImageBitmap): ImageBitmap {
+    val src = source.asAndroidBitmap()
+    val quarter = android.graphics.Bitmap.createScaledBitmap(src, src.width / 4, src.height / 4, true)
+    val tiny = android.graphics.Bitmap.createScaledBitmap(quarter, src.width / 32, src.height / 32, true)
+    return android.graphics.Bitmap.createScaledBitmap(tiny, src.width / 4, src.height / 4, true).asImageBitmap()
+}
+
+/** How dark the photo gets behind the app grid. */
+internal const val GRID_DIM = 0.6f
 
 /** Cycles through the photos on a timer, loading each before showing it. */
 @Composable
@@ -283,11 +301,22 @@ private fun rememberPhotoFrame(photos: List<Photos.Photo>): Frame? {
 
 @Composable
 private fun Backdrop(frame: Frame?, dimmed: Boolean) {
-    val dim by animateFloatAsState(if (dimmed) 0.6f else 0f, tween(500), label = "dim")
+    val dim by animateFloatAsState(if (dimmed) GRID_DIM else 0f, tween(500), label = "dim")
+    val blur by animateFloatAsState(if (dimmed) 1f else 0f, tween(500), label = "blur")
     Box(Modifier.fillMaxSize()) {
         Crossfade(targetState = frame, animationSpec = tween(1500), label = "photo") { f ->
             if (f != null) {
-                Image(f.bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize()) {
+                    Image(f.bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    if (blur > 0f) {
+                        Image(
+                            f.blurred,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().alpha(blur),
+                        )
+                    }
+                }
             } else {
                 Box(
                     Modifier.fillMaxSize().background(
