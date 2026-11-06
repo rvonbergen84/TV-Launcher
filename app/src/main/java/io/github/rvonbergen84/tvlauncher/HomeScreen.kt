@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -93,7 +95,10 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
     var serviceOn by remember { mutableStateOf(true) }
     var menuFor by remember { mutableStateOf<AppEntry?>(null) }
     var photos by remember { mutableStateOf(Photos.cachedOnly(context)) }
-    var caption by remember { mutableStateOf<Photos.Photo?>(null) }
+    val frame = rememberPhotoFrame(photos)
+    val place = remember { Prefs.place(context) }
+    val weather = rememberWeather(place)
+    val now = rememberNow()
     val listState = rememberLazyListState()
     val firstFavorite = remember { FocusRequester() }
 
@@ -115,6 +120,48 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
             runCatching { firstFavorite.requestFocus() }
         }
     }
+
+    HomeContent(
+        layout = layout,
+        inputs = inputs,
+        serviceOn = serviceOn,
+        frame = frame,
+        now = now,
+        weather = weather,
+        place = place,
+        listState = listState,
+        firstFavorite = firstFavorite,
+        onOpenSetup = onOpenSetup,
+        onAppMenu = { menuFor = it },
+    )
+
+    menuFor?.let { app ->
+        AppMenu(
+            app = app,
+            favorites = layout.favorites.map { it.packageName },
+            onDone = { changed ->
+                menuFor = null
+                if (changed) editTick++
+            },
+        )
+    }
+}
+
+/** Everything drawn on the home screen. No loading here, so it can be previewed with sample data. */
+@Composable
+fun HomeContent(
+    layout: Catalog.Layout,
+    inputs: List<InputEntry>,
+    serviceOn: Boolean,
+    frame: Frame?,
+    now: Date,
+    weather: Weather.Now?,
+    place: Prefs.Place?,
+    listState: LazyListState,
+    firstFavorite: FocusRequester,
+    onOpenSetup: () -> Unit,
+    onAppMenu: (AppEntry) -> Unit,
+) {
     LaunchedEffect(layout.favorites.isNotEmpty()) {
         if (layout.favorites.isNotEmpty()) runCatching { firstFavorite.requestFocus() }
     }
@@ -133,7 +180,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
             }
         }
 
-        PhotoBackdrop(photos, dimmed, onShowing = { caption = it })
+        Backdrop(frame, dimmed)
 
         LazyColumn(
             state = listState,
@@ -142,7 +189,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
         ) {
             item(key = "hero") {
                 Box(Modifier.fillMaxWidth().height(heroHeight)) {
-                    caption?.let { Caption(it, Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)) }
+                    frame?.let { Caption(it.photo, Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)) }
                 }
             }
             item(key = "favorites") {
@@ -152,7 +199,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
                             app = app,
                             width = favWidth,
                             modifier = if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier,
-                            onLongClick = { menuFor = app },
+                            onLongClick = { onAppMenu(app) },
                         )
                     }
                 }
@@ -176,7 +223,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(gridGap),
                         modifier = Modifier.padding(bottom = 4.dp),
                     ) {
-                        row.forEach { app -> AppTile(app, gridWidth, Modifier, onLongClick = { menuFor = app }) }
+                        row.forEach { app -> AppTile(app, gridWidth, Modifier, onLongClick = { onAppMenu(app) }) }
                     }
                 }
             }
@@ -192,27 +239,17 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
             }
         }
 
-        TopOverlay(onOpenSetup)
-    }
-
-    menuFor?.let { app ->
-        AppMenu(
-            app = app,
-            favorites = layout.favorites.map { it.packageName },
-            onDone = { changed ->
-                menuFor = null
-                if (changed) editTick++
-            },
-        )
+        TopOverlay(now, weather, place, hidden = dimmed, onOpenSetup)
     }
 }
 
 // ---------- Background photo ----------
 
-private class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo)
+class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo)
 
+/** Cycles through the photos on a timer, loading each before showing it. */
 @Composable
-private fun PhotoBackdrop(photos: List<Photos.Photo>, dimmed: Boolean, onShowing: (Photos.Photo?) -> Unit) {
+private fun rememberPhotoFrame(photos: List<Photos.Photo>): Frame? {
     val context = LocalContext.current
     var frame by remember { mutableStateOf<Frame?>(null) }
 
@@ -231,14 +268,17 @@ private fun PhotoBackdrop(photos: List<Photos.Photo>, dimmed: Boolean, onShowing
             }
             failures = 0
             frame = Frame(bitmap, photo)
-            onShowing(photo)
             // Fetch the next one now so the switch is instant.
             prefetch(context, photos[index % photos.size].url)
             delay(Prefs.photoSeconds(context) * 1000L)
         }
         Prefs.log(context, "Photos: none of the images would load")
     }
+    return frame
+}
 
+@Composable
+private fun Backdrop(frame: Frame?, dimmed: Boolean) {
     val dim by animateFloatAsState(if (dimmed) 0.7f else 0f, tween(500), label = "dim")
     Box(Modifier.fillMaxSize()) {
         Crossfade(targetState = frame, animationSpec = tween(1500), label = "photo") { f ->
@@ -301,18 +341,22 @@ private fun Caption(photo: Photos.Photo, modifier: Modifier) {
 // ---------- Clock, weather, settings ----------
 
 @Composable
-private fun TopOverlay(onOpenSetup: () -> Unit) {
-    val context = LocalContext.current
+private fun rememberNow(): Date {
     var now by remember { mutableStateOf(Date()) }
-    var weather by remember { mutableStateOf(WeatherMemory.now) }
-    val place = remember { Prefs.place(context) }
-
     LaunchedEffect(Unit) {
         while (true) {
             now = Date()
             delay(5_000)
         }
     }
+    return now
+}
+
+/** Current weather for the saved place, refreshed every 15 minutes. */
+@Composable
+private fun rememberWeather(place: Prefs.Place?): Weather.Now? {
+    val context = LocalContext.current
+    var weather by remember { mutableStateOf(WeatherMemory.now) }
     LaunchedEffect(place) {
         if (place == null) return@LaunchedEffect
         while (true) {
@@ -334,8 +378,18 @@ private fun TopOverlay(onOpenSetup: () -> Unit) {
             delay(60_000)
         }
     }
+    return weather
+}
 
-    Row(Modifier.fillMaxWidth().padding(start = SIDE.dp, end = SIDE.dp, top = 28.dp), verticalAlignment = Alignment.Top) {
+@Composable
+private fun TopOverlay(now: Date, weather: Weather.Now?, place: Prefs.Place?, hidden: Boolean, onOpenSetup: () -> Unit) {
+    val context = LocalContext.current
+    // Fades out while browsing the app grid, which scrolls up underneath it.
+    val alpha by animateFloatAsState(if (hidden) 0f else 1f, tween(300), label = "overlay")
+    Row(
+        Modifier.fillMaxWidth().alpha(alpha).padding(start = SIDE.dp, end = SIDE.dp, top = 28.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
         Column {
             Text(
                 android.text.format.DateFormat.getTimeFormat(context).format(now),
@@ -365,6 +419,7 @@ private fun TopOverlay(onOpenSetup: () -> Unit) {
             onClick = onOpenSetup,
             colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = 0.25f), contentColor = Color.White),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            modifier = Modifier.focusProperties { canFocus = !hidden },
         ) { Text("Settings", fontSize = 14.sp) }
     }
 }
