@@ -24,6 +24,43 @@ data class InputEntry(val id: String, val label: String)
 /** Reads installed TV apps and HDMI inputs from the system. Call off the main thread. */
 object Catalog {
 
+    /** Last loaded list, so the home screen can draw instantly when reopened. */
+    @Volatile
+    var lastApps: List<AppEntry> = emptyList()
+        private set
+
+    /** Used to fill the top row until the user picks favourites. First installed ones win. */
+    private val DEFAULT_FAVORITES = listOf(
+        "com.google.android.youtube.tv",
+        "com.netflix.ninja",
+        "com.amazon.amazonvideo.livingroom",
+        "com.disney.disneyplus",
+        "com.wbd.stream",
+        "com.hulu.livingroomplus",
+        "com.apple.atve.androidtv.appletv",
+        "com.google.android.youtube.tvunplugged",
+        "com.plexapp.android",
+        "com.spotify.tv.android",
+    )
+
+    data class Layout(val favorites: List<AppEntry>, val others: List<AppEntry>, val hidden: List<AppEntry>)
+
+    /** Splits apps into the top row, the grid below it, and hidden apps. */
+    fun arrange(context: Context, apps: List<AppEntry>): Layout {
+        val byPackage = apps.associateBy { it.packageName }
+        val hidden = Prefs.hidden(context)
+        val chosen = Prefs.favorites(context)
+            ?: (DEFAULT_FAVORITES.filter { it in byPackage } + apps.map { it.packageName })
+                .distinct().take(Prefs.FAVORITE_SLOTS)
+        val favorites = chosen.mapNotNull { byPackage[it] }.filter { it.packageName !in hidden }
+        val favSet = favorites.map { it.packageName }.toSet()
+        return Layout(
+            favorites = favorites,
+            others = apps.filter { it.packageName !in favSet && it.packageName !in hidden },
+            hidden = apps.filter { it.packageName in hidden },
+        )
+    }
+
     fun loadApps(context: Context): List<AppEntry> {
         val pm = context.packageManager
         val leanback = pm.queryIntentActivities(
@@ -38,6 +75,7 @@ object Catalog {
             .filter { seen.add(it.activityInfo.packageName) }
             .map { toEntry(pm, it) }
             .sortedBy { it.label.lowercase() }
+            .also { lastApps = it }
     }
 
     private fun toEntry(pm: PackageManager, info: ResolveInfo): AppEntry {

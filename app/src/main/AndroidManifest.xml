@@ -26,6 +26,7 @@
     </queries>
 
     <application
+        android:name=".LauncherApp"
         android:allowBackup="false"
         android:banner="@drawable/banner"
         android:icon="@drawable/banner"

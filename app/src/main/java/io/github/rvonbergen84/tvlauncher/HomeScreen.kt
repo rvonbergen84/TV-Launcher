@@ -1,0 +1,523 @@
+package io.github.rvonbergen84.tvlauncher
+
+import android.content.Context
+import android.graphics.drawable.BitmapDrawable
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.tv.material3.Border
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
+import androidx.tv.material3.Text
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.util.Date
+import kotlin.random.Random
+
+private const val SIDE = 56
+private const val GRID_COLUMNS = 5
+private val TileShape = RoundedCornerShape(10.dp)
+private val TextShadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 2f), 10f)
+
+/** Survives leaving and re-entering the home screen, so weather shows instantly. */
+private object WeatherMemory {
+    var key: String = ""
+    var fetchedAt = 0L
+    var now: Weather.Now? = null
+}
+
+@Composable
+fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
+    val context = LocalContext.current
+    var apps by remember { mutableStateOf(Catalog.lastApps) }
+    var inputs by remember { mutableStateOf<List<InputEntry>>(emptyList()) }
+    var editTick by remember { mutableIntStateOf(0) }
+    val layout = remember(apps, editTick) { Catalog.arrange(context, apps) }
+    var serviceOn by remember { mutableStateOf(true) }
+    var menuFor by remember { mutableStateOf<AppEntry?>(null) }
+    var photos by remember { mutableStateOf(Photos.cachedOnly(context)) }
+    var caption by remember { mutableStateOf<Photos.Photo?>(null) }
+    val listState = rememberLazyListState()
+    val firstFavorite = remember { FocusRequester() }
+
+    LaunchedEffect(resumeTick) {
+        serviceOn = HomeButtonService.isEnabled(context)
+        val loaded = withContext(Dispatchers.IO) { Catalog.loadApps(context) to Catalog.loadInputs(context) }
+        apps = loaded.first
+        inputs = loaded.second
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            photos = withContext(Dispatchers.IO) { Photos.load(context) }.ifEmpty { photos }
+            delay(6L * 60 * 60 * 1000) // Photos.load only hits the network once a day
+        }
+    }
+    LaunchedEffect(homeTick) {
+        if (homeTick > 0) {
+            listState.scrollToItem(0)
+            runCatching { firstFavorite.requestFocus() }
+        }
+    }
+    LaunchedEffect(layout.favorites.isNotEmpty()) {
+        if (layout.favorites.isNotEmpty()) runCatching { firstFavorite.requestFocus() }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val favGap = 28.dp
+        val gridGap = 20.dp
+        val content = maxWidth - (SIDE * 2).dp
+        val favWidth = (content - favGap * (Prefs.FAVORITE_SLOTS - 1)) / Prefs.FAVORITE_SLOTS
+        val gridWidth = (content - gridGap * (GRID_COLUMNS - 1)) / GRID_COLUMNS
+        val heroHeight = maxHeight - favWidth * 9f / 16f - 96.dp
+        val heroPx = with(LocalDensity.current) { heroHeight.toPx() }
+        val dimmed by remember(heroPx) {
+            derivedStateOf {
+                listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > heroPx * 0.35f
+            }
+        }
+
+        PhotoBackdrop(photos, dimmed, onShowing = { caption = it })
+
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(start = SIDE.dp, end = SIDE.dp, bottom = 48.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            item(key = "hero") {
+                Box(Modifier.fillMaxWidth().height(heroHeight)) {
+                    caption?.let { Caption(it, Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)) }
+                }
+            }
+            item(key = "favorites") {
+                Row(horizontalArrangement = Arrangement.spacedBy(favGap)) {
+                    layout.favorites.forEachIndexed { index, app ->
+                        AppTile(
+                            app = app,
+                            width = favWidth,
+                            modifier = if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier,
+                            onLongClick = { menuFor = app },
+                        )
+                    }
+                }
+            }
+            if (!serviceOn) {
+                item(key = "warning") {
+                    Text(
+                        "The Home button isn't connected. Open Settings at the top right to turn it on.",
+                        color = Warning,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+            if (layout.others.isNotEmpty()) {
+                item(key = "apps-title") {
+                    SectionTitle("Apps", hint = "Hold OK on an app to move, favorite or hide it")
+                }
+                items(layout.others.chunked(GRID_COLUMNS), key = { row -> row.first().packageName }) { row ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(gridGap),
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    ) {
+                        row.forEach { app -> AppTile(app, gridWidth, Modifier, onLongClick = { menuFor = app }) }
+                    }
+                }
+            }
+            if (inputs.isNotEmpty()) {
+                item(key = "inputs") {
+                    Column {
+                        SectionTitle("Inputs")
+                        Row(horizontalArrangement = Arrangement.spacedBy(gridGap)) {
+                            inputs.forEach { InputTile(it, gridWidth) }
+                        }
+                    }
+                }
+            }
+        }
+
+        TopOverlay(onOpenSetup)
+    }
+
+    menuFor?.let { app ->
+        AppMenu(
+            app = app,
+            favorites = layout.favorites.map { it.packageName },
+            onDone = { changed ->
+                menuFor = null
+                if (changed) editTick++
+            },
+        )
+    }
+}
+
+// ---------- Background photo ----------
+
+private class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo)
+
+@Composable
+private fun PhotoBackdrop(photos: List<Photos.Photo>, dimmed: Boolean, onShowing: (Photos.Photo?) -> Unit) {
+    val context = LocalContext.current
+    var frame by remember { mutableStateOf<Frame?>(null) }
+
+    LaunchedEffect(photos) {
+        if (photos.isEmpty()) return@LaunchedEffect
+        var index = Random.nextInt(photos.size)
+        var failures = 0
+        while (failures < photos.size) {
+            val photo = photos[index % photos.size]
+            index++
+            val bitmap = loadBitmap(context, photo.url)
+            if (bitmap == null) {
+                failures++
+                delay(1_000)
+                continue
+            }
+            failures = 0
+            frame = Frame(bitmap, photo)
+            onShowing(photo)
+            // Fetch the next one now so the switch is instant.
+            prefetch(context, photos[index % photos.size].url)
+            delay(Prefs.photoSeconds(context) * 1000L)
+        }
+        Prefs.log(context, "Photos: none of the images would load")
+    }
+
+    val dim by animateFloatAsState(if (dimmed) 0.7f else 0f, tween(500), label = "dim")
+    Box(Modifier.fillMaxSize()) {
+        Crossfade(targetState = frame, animationSpec = tween(1500), label = "photo") { f ->
+            if (f != null) {
+                Image(f.bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.linearGradient(listOf(Color(0xFF1B2638), Color(0xFF0B0E14))),
+                    ),
+                )
+            }
+        }
+        // Keeps the clock readable on bright photos.
+        Box(
+            Modifier.fillMaxWidth().height(200.dp).background(
+                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)),
+            ),
+        )
+        // Keeps the app row readable.
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0.45f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.85f),
+                ),
+            ),
+        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)))
+    }
+}
+
+private fun photoRequest(context: Context, url: String) =
+    ImageRequest.Builder(context).data(url).size(1920, 1080).allowHardware(false).build()
+
+private suspend fun loadBitmap(context: Context, url: String): ImageBitmap? {
+    val result = context.imageLoader.execute(photoRequest(context, url))
+    return ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap?.asImageBitmap()
+}
+
+private fun prefetch(context: Context, url: String) {
+    context.imageLoader.enqueue(photoRequest(context, url))
+}
+
+@Composable
+private fun Caption(photo: Photos.Photo, modifier: Modifier) {
+    val text = listOf(photo.title, photo.credit).filter { it.isNotBlank() }.joinToString("  ·  ")
+    Text(
+        text,
+        fontSize = 12.sp,
+        color = Color.White.copy(alpha = 0.75f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        style = TextStyle(shadow = TextShadow),
+        textAlign = TextAlign.End,
+        modifier = modifier.width(420.dp),
+    )
+}
+
+// ---------- Clock, weather, settings ----------
+
+@Composable
+private fun TopOverlay(onOpenSetup: () -> Unit) {
+    val context = LocalContext.current
+    var now by remember { mutableStateOf(Date()) }
+    var weather by remember { mutableStateOf(WeatherMemory.now) }
+    val place = remember { Prefs.place(context) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Date()
+            delay(5_000)
+        }
+    }
+    LaunchedEffect(place) {
+        if (place == null) return@LaunchedEffect
+        while (true) {
+            val key = "${place.lat},${place.lon},${Prefs.fahrenheit(context)}"
+            val stale = System.currentTimeMillis() - WeatherMemory.fetchedAt > 15 * 60_000
+            if (key != WeatherMemory.key || stale) {
+                val fresh = withContext(Dispatchers.IO) {
+                    runCatching { Weather.fetch(context) }
+                        .onFailure { Prefs.log(context, "Weather: ${it.message}") }
+                        .getOrNull()
+                }
+                if (fresh != null) {
+                    WeatherMemory.key = key
+                    WeatherMemory.fetchedAt = System.currentTimeMillis()
+                    WeatherMemory.now = fresh
+                }
+                weather = WeatherMemory.now
+            }
+            delay(60_000)
+        }
+    }
+
+    Row(Modifier.fillMaxWidth().padding(start = SIDE.dp, end = SIDE.dp, top = 28.dp), verticalAlignment = Alignment.Top) {
+        Column {
+            Text(
+                android.text.format.DateFormat.getTimeFormat(context).format(now),
+                fontSize = 46.sp,
+                fontWeight = FontWeight.Light,
+                color = Color.White,
+                style = TextStyle(shadow = TextShadow),
+            )
+            val w = weather
+            when {
+                place == null -> Text(
+                    "Add your city in Settings to see the weather",
+                    fontSize = 14.sp,
+                    color = Muted,
+                    style = TextStyle(shadow = TextShadow),
+                )
+                w != null -> Text(
+                    "${w.icon}  ${w.temperature}°  ${w.description}  ·  ${place.name.substringBefore(',')}",
+                    fontSize = 18.sp,
+                    color = Color.White.copy(alpha = 0.9f),
+                    style = TextStyle(shadow = TextShadow),
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Button(
+            onClick = onOpenSetup,
+            colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = 0.25f), contentColor = Color.White),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+        ) { Text("Settings", fontSize = 14.sp) }
+    }
+}
+
+// ---------- Tiles ----------
+
+@Composable
+private fun SectionTitle(text: String, hint: String? = null) {
+    Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
+        Text(text, fontSize = 18.sp, color = Muted)
+        Spacer(Modifier.weight(1f))
+        if (hint != null) Text(hint, fontSize = 12.sp, color = Muted.copy(alpha = 0.7f))
+    }
+}
+
+@Composable
+private fun tileBorder() = CardDefaults.border(
+    focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = TileShape),
+)
+
+@Composable
+private fun AppTile(app: AppEntry, width: Dp, modifier: Modifier, onLongClick: () -> Unit) {
+    val context = LocalContext.current
+    var focused by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(width)) {
+        Card(
+            onClick = {
+                if (!Catalog.launchApp(context, app.packageName)) toast(context, "Couldn't open ${app.label}.")
+            },
+            onLongClick = onLongClick,
+            shape = CardDefaults.shape(TileShape),
+            border = tileBorder(),
+            colors = CardDefaults.colors(containerColor = Color(0xFF1E2533)),
+            modifier = modifier
+                .width(width)
+                .height(width * 9f / 16f)
+                .onFocusChanged { focused = it.isFocused },
+        ) {
+            val bitmap = app.image
+            if (bitmap != null && app.hasBanner) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = app.label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    if (bitmap != null) {
+                        Image(bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.size(width / 4))
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    Text(
+                        app.label,
+                        fontSize = 13.sp,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+            }
+        }
+        // Name under the focused tile only, so the screen stays clean.
+        Text(
+            app.label,
+            fontSize = 13.sp,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = TextStyle(shadow = TextShadow),
+            modifier = Modifier.padding(top = 10.dp).alpha(if (focused) 1f else 0f),
+        )
+    }
+}
+
+@Composable
+private fun InputTile(input: InputEntry, width: Dp) {
+    val context = LocalContext.current
+    Card(
+        onClick = {
+            if (!Catalog.switchToInput(context, input.id)) toast(context, "This TV didn't accept the input switch.")
+        },
+        shape = CardDefaults.shape(TileShape),
+        border = tileBorder(),
+        colors = CardDefaults.colors(containerColor = Color(0xFF1E2533)),
+        modifier = Modifier.width(width).height(56.dp),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(input.label, fontSize = 15.sp, color = Color.White, maxLines = 1)
+        }
+    }
+}
+
+// ---------- Hold-OK menu ----------
+
+@Composable
+private fun AppMenu(app: AppEntry, favorites: List<String>, onDone: (changed: Boolean) -> Unit) {
+    val context = LocalContext.current
+    val index = favorites.indexOf(app.packageName)
+    val isFavorite = index >= 0
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+
+    fun save(list: List<String>) {
+        Prefs.setFavorites(context, list)
+        onDone(true)
+    }
+
+    val actions = buildList<Pair<String, () -> Unit>> {
+        if (isFavorite) {
+            if (index > 0) add("Move left" to {
+                save(favorites.toMutableList().apply { add(index - 1, removeAt(index)) })
+            })
+            if (index < favorites.size - 1) add("Move right" to {
+                save(favorites.toMutableList().apply { add(index + 1, removeAt(index)) })
+            })
+            add("Remove from top row" to { save(favorites - app.packageName) })
+        } else {
+            add("Add to top row" to {
+                if (favorites.size >= Prefs.FAVORITE_SLOTS) {
+                    toast(context, "The top row holds ${Prefs.FAVORITE_SLOTS} apps. Remove one first.")
+                    onDone(false)
+                } else {
+                    save(favorites + app.packageName)
+                }
+            })
+        }
+        add("Hide app" to {
+            Prefs.setHidden(context, Prefs.hidden(context) + app.packageName)
+            if (isFavorite) Prefs.setFavorites(context, favorites - app.packageName)
+            toast(context, "${app.label} hidden. Show it again from Settings.")
+            onDone(true)
+        })
+        add("Cancel" to { onDone(false) })
+    }
+
+    Dialog(onDismissRequest = { onDone(false) }) {
+        Column(
+            Modifier.background(Color(0xFF1A202B), RoundedCornerShape(16.dp)).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(app.label, fontSize = 20.sp, color = Color.White, modifier = Modifier.padding(bottom = 6.dp))
+            actions.forEachIndexed { i, (label, action) ->
+                Button(
+                    onClick = action,
+                    modifier = Modifier.width(260.dp).then(if (i == 0) Modifier.focusRequester(first) else Modifier),
+                ) { Text(label) }
+            }
+        }
+    }
+}
