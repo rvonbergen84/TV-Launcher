@@ -204,8 +204,8 @@ class HomePreviewTest {
             Tile("sample.${label.lowercase().replace(Regex("[^a-z]"), "")}", label, banner(label, color.toInt()), true)
         }
         val consoles = listOf(
-            Tile("input:hdmi4", "Xbox", inputId = "hdmi4", detail = "HDMI 4"),
-            Tile("input:hdmi1", "Switch", inputId = "hdmi1", detail = "HDMI 1"),
+            Tile("input:hdmi4", "Xbox", inputId = "hdmi4", detail = "HDMI 4", colorIndex = TileColors.defaultFor("Xbox")),
+            Tile("input:hdmi1", "Switch", inputId = "hdmi1", detail = "HDMI 1", colorIndex = TileColors.defaultFor("Switch")),
         )
         // Default order puts the 9 apps first, then the consoles; extras land in "More".
         return appTiles.take(9) + consoles + appTiles.drop(9)

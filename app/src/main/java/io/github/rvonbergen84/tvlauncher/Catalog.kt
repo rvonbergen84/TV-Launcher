@@ -35,6 +35,8 @@ data class Tile(
     val inputId: String? = null,
     /** Small second line, e.g. "HDMI 4" under an input renamed to "Xbox". */
     val detail: String? = null,
+    /** Background colour for input tiles, index into [TileColors.palette]. */
+    val colorIndex: Int = 0,
 ) {
     val isInput: Boolean get() = inputId != null
 }
@@ -78,7 +80,13 @@ object Catalog {
             inputs.map { input ->
                 val key = inputKey(input.id)
                 val name = Prefs.tileName(context, key)
-                Tile(key, name ?: input.label, inputId = input.id, detail = if (name != null) input.label else null)
+                val label = name ?: input.label
+                Tile(
+                    key, label,
+                    inputId = input.id,
+                    detail = if (name != null) input.label else null,
+                    colorIndex = Prefs.tileColor(context, key) ?: TileColors.defaultFor(label),
+                )
             }
 
     fun arrange(context: Context, apps: List<AppEntry>, inputs: List<InputEntry>): Layout {
@@ -217,4 +225,29 @@ object Catalog {
 
     private fun tryStart(context: Context, intent: Intent) =
         runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+}
+
+/** Colours for input tiles. Plain colours, not anyone's brand artwork. */
+object TileColors {
+    data class Choice(val name: String, val top: Long, val bottom: Long)
+
+    val palette = listOf(
+        Choice("Slate", 0xFF2E3850, 0xFF1A2030),
+        Choice("Green", 0xFF2E9A44, 0xFF17602A),
+        Choice("Red", 0xFFE0453A, 0xFF9E1F1A),
+        Choice("Blue", 0xFF3A7BE0, 0xFF1C4A9E),
+        Choice("Purple", 0xFF8A5BD6, 0xFF55328F),
+        Choice("Orange", 0xFFEE8A2E, 0xFFB0561A),
+    )
+
+    /** A sensible first colour from the tile's name; the user can change it. */
+    fun defaultFor(label: String): Int {
+        val l = label.lowercase()
+        return when {
+            "xbox" in l -> 1
+            "switch" in l || "nintendo" in l -> 2
+            "playstation" in l || l.startsWith("ps") -> 3
+            else -> 0
+        }
+    }
 }

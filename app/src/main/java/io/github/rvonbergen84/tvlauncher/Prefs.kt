@@ -71,6 +71,12 @@ object Prefs {
     fun setTileName(context: Context, key: String, name: String) =
         prefs(context).edit().putString("name:$key", name.trim()).apply()
 
+    /** Chosen colour for an input tile (index into [TileColors.palette]), or null for the default. */
+    fun tileColor(context: Context, key: String): Int? =
+        prefs(context).getInt("color:$key", -1).takeIf { it >= 0 }
+    fun setTileColor(context: Context, key: String, index: Int) =
+        prefs(context).edit().putInt("color:$key", index).apply()
+
     fun hidden(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_HIDDEN, emptySet())!!.toSet()
     fun setHidden(context: Context, packages: Set<String>) =

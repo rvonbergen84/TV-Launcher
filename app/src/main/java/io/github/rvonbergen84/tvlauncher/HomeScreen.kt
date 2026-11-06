@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -61,6 +62,8 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -171,6 +174,7 @@ fun HomeScreen(resumeTick: Int, homeTick: Int, onOpenSetup: () -> Unit) {
                 menuFor = null
                 renaming = tile
             },
+            onRecolor = { editTick++ },
             onDone = { changed ->
                 menuFor = null
                 if (changed) editTick++
@@ -654,11 +658,16 @@ private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () 
                 tile.isInput -> Column(
                     Modifier
                         .fillMaxSize()
-                        .background(Brush.verticalGradient(listOf(Color(0xFF2A3346), Color(0xFF1A2030))))
+                        .background(
+                            TileColors.palette[tile.colorIndex.coerceIn(TileColors.palette.indices)].let {
+                                Brush.verticalGradient(listOf(Color(it.top), Color(it.bottom)))
+                            },
+                        )
                         .semantics { contentDescription = tile.label },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
+                    ControllerIcon(Modifier.size(width = width / 4, height = width / 7).padding(bottom = 4.dp))
                     Text(
                         tile.label,
                         fontSize = (width.value / 7f).coerceIn(14f, 22f).sp,
@@ -669,7 +678,7 @@ private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () 
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
                     tile.detail?.let {
-                        Text(it, fontSize = 11.sp, color = Muted, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                        Text(it, fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f), maxLines = 1)
                     }
                 }
                 else -> Column(
@@ -705,6 +714,27 @@ private fun TileCard(tile: Tile, width: Dp, modifier: Modifier, onLongClick: () 
     }
 }
 
+/** A plain game controller outline: body with two grips, a d-pad and two buttons. */
+@Composable
+private fun ControllerIcon(modifier: Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val ink = Color.White.copy(alpha = 0.92f)
+        // Body and grips.
+        drawRoundRect(ink, topLeft = Offset(w * 0.08f, h * 0.12f), size = Size(w * 0.84f, h * 0.56f), cornerRadius = CornerRadius(h * 0.28f))
+        drawCircle(ink, radius = h * 0.26f, center = Offset(w * 0.22f, h * 0.66f))
+        drawCircle(ink, radius = h * 0.26f, center = Offset(w * 0.78f, h * 0.66f))
+        // D-pad and buttons, cut out in the tile colour by drawing them transparent-dark.
+        val cut = Color.Black.copy(alpha = 0.55f)
+        val arm = h * 0.09f
+        drawRect(cut, topLeft = Offset(w * 0.27f - arm * 2.2f, h * 0.40f - arm / 2), size = Size(arm * 4.4f, arm))
+        drawRect(cut, topLeft = Offset(w * 0.27f - arm / 2, h * 0.40f - arm * 2.2f), size = Size(arm, arm * 4.4f))
+        drawCircle(cut, radius = arm * 0.85f, center = Offset(w * 0.68f, h * 0.46f))
+        drawCircle(cut, radius = arm * 0.85f, center = Offset(w * 0.78f, h * 0.33f))
+    }
+}
+
 // ---------- Hold-OK menu ----------
 
 /**
@@ -717,6 +747,7 @@ internal fun TileMenu(
     order: List<String>,
     hiddenKeys: List<String>,
     onRename: () -> Unit,
+    onRecolor: () -> Unit = {},
     onDone: (changed: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -725,6 +756,7 @@ internal fun TileMenu(
     val endOfSecond = top + Prefs.SECOND_ROW_SLOTS
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    var colorIndex by remember { mutableIntStateOf(tile.colorIndex.coerceIn(TileColors.palette.indices)) }
 
     fun moveTo(target: Int) {
         val list = order.toMutableList()
@@ -744,7 +776,14 @@ internal fun TileMenu(
             else -> add("Move to top row" to { moveTo(top - 1) })
         }
         if (index >= endOfSecond) add("Move to second row" to { moveTo(endOfSecond - 1) })
-        if (tile.isInput) add("Rename" to onRename)
+        if (tile.isInput) {
+            add("Rename" to onRename)
+            add("Color: ${TileColors.palette[colorIndex].name}" to {
+                colorIndex = (colorIndex + 1) % TileColors.palette.size
+                Prefs.setTileColor(context, tile.key, colorIndex)
+                onRecolor()
+            })
+        }
         add("Hide" to {
             Prefs.setHidden(context, Prefs.hidden(context) + tile.key)
             toast(context, "${tile.label} hidden. Show it again from Settings.")
