@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +55,7 @@ import androidx.tv.material3.Text
 import androidx.tv.material3.darkColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
@@ -263,8 +265,13 @@ private fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
     var redirect by remember { mutableStateOf(Prefs.redirectStockHome(context)) }
     var log by remember { mutableStateOf(Prefs.readLog(context)) }
     val firstButton = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val installed = remember { Updater.installedVersion(context) }
+    var latest by remember { mutableStateOf<Updater.Release?>(null) }
+    var updating by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { runCatching { firstButton.requestFocus() } }
+    LaunchedEffect(Unit) { latest = withContext(Dispatchers.IO) { Updater.fetchLatest() } }
     LaunchedEffect(resumeTick) {
         while (true) {
             serviceOn = HomeButtonService.isEnabled(context)
@@ -319,6 +326,40 @@ private fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
                 Button(onClick = {
                     if (!Catalog.openStockHome(context)) toast(context, "Couldn't find the stock home screen.")
                 }) { Text("Open stock home for 60 seconds") }
+            }
+            item {
+                val newer = latest?.takeIf { it.versionCode > installed.versionCode }
+                Button(
+                    enabled = !updating,
+                    onClick = {
+                        if (!Updater.canInstall(context)) {
+                            toast(context, "Turn on \"Allow from this source\", then press Back and Update again.")
+                            Updater.openInstallPermission(context)
+                            return@Button
+                        }
+                        updating = true
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                if (newer == null) {
+                                    latest = Updater.fetchLatest()
+                                } else {
+                                    runCatching { Updater.downloadAndInstall(context) }
+                                        .onFailure { Prefs.log(context, "Update failed: ${it.message}") }
+                                }
+                            }
+                            updating = false
+                        }
+                    },
+                ) {
+                    Text(
+                        when {
+                            updating -> "Working..."
+                            newer != null -> "Update to ${newer.versionName}"
+                            latest == null -> "Check for update (have ${installed.versionName})"
+                            else -> "Up to date (${installed.versionName}), check again"
+                        },
+                    )
+                }
             }
             item {
                 Button(onClick = {

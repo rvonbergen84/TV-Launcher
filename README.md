@@ -25,6 +25,12 @@ app take over the remote's Home button. The UI is deliberately basic.
    apps that can install others, so Downloader has to be installed first.)
 4. Open **TV Launcher** from your apps.
 
+## Updating
+From 0.3.0 on, open **Setup** and press **Update**. The first time, the TV asks you to let
+TV Launcher install apps; turn that on, press Back, and press Update again.
+To publish a new version: bump `versionCode`/`versionName` in `app/build.gradle.kts`,
+run `scripts/publish.sh`, and push.
+
 ## Test
 1. Open **Setup** → **Turn on the Home button service** → turn on "TV Launcher Home button".
 2. Press Home on the remote.
