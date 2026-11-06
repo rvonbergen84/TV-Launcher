@@ -98,6 +98,37 @@ class HomePreviewTest {
         capture("back-up")
     }
 
+    @Test
+    fun downFromSettingsReturnsToFavorites() {
+        render()
+        focus("Netflix")
+        press(Key.DirectionUp)
+        compose.onNodeWithContentDescription("Settings").assertIsFocused()
+        press(Key.DirectionDown)
+        compose.onNodeWithContentDescription("Netflix").assertIsFocused()
+        assertAtTop()
+    }
+
+    @Test
+    fun repeatedDownAndUpEndsAtTop() {
+        render()
+        focus("YouTube")
+        for (gap in listOf(400L, 120L, 50L)) {
+            repeat(3) { pressQuick(Key.DirectionDown, gap) }
+            repeat(3) { pressQuick(Key.DirectionUp, gap) }
+        }
+        settle()
+        assertAtTop()
+        capture("after-down-up")
+    }
+
+    /** A press at remote speed: only a few frames pass before the next one. */
+    @OptIn(ExperimentalTestApi::class)
+    private fun pressQuick(key: Key, gapMs: Long) {
+        compose.onRoot().performKeyInput { pressKey(key) }
+        compose.mainClock.advanceTimeBy(gapMs)
+    }
+
     private fun focus(app: String) {
         compose.onNodeWithContentDescription(app).requestFocus()
         settle()

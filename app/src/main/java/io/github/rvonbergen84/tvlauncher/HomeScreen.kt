@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -200,6 +201,19 @@ fun HomeContent(
                 scope.launch { listState.animateScrollToItem(0) }
             }
         }
+        // The TV's own "keep the selected tile in view" scroll can land after ours and
+        // leave the top row near the top of the screen. Whenever the top row has focus
+        // and scrolling stops anywhere but the top, go back to the top.
+        LaunchedEffect(inGrid) {
+            if (inGrid) return@LaunchedEffect
+            snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+                val atTop = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+                if (!scrolling && !atTop) listState.animateScrollToItem(0)
+            }
+        }
+        // Remember which favourite was last selected, so Down from the gear lands on it.
+        val favoriteFocus = remember(layout.favorites.size) { List(layout.favorites.size) { FocusRequester() } }
+        var lastFavorite by remember { mutableIntStateOf(0) }
         val onGridFocus = Modifier.onFocusChanged {
             if (it.hasFocus && !inGrid) {
                 inGrid = true
@@ -229,7 +243,10 @@ fun HomeContent(
                         AppTile(
                             app = app,
                             width = favWidth,
-                            modifier = if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier,
+                            modifier = Modifier
+                                .then(if (index == 0) Modifier.focusRequester(firstFavorite) else Modifier)
+                                .focusRequester(favoriteFocus[index])
+                                .onFocusChanged { if (it.isFocused) lastFavorite = index },
                             onLongClick = { onAppMenu(app) },
                         )
                     }
@@ -272,7 +289,11 @@ fun HomeContent(
 
         }
 
-        TopOverlay(now, weather, place, hidden = inGrid, onOpenSetup)
+        TopOverlay(
+            now, weather, place, hidden = inGrid,
+            downTo = favoriteFocus.getOrNull(lastFavorite) ?: firstFavorite,
+            onOpenSetup = onOpenSetup,
+        )
     }
 }
 
@@ -502,7 +523,14 @@ private fun rememberWeather(place: Prefs.Place?): Weather.Now? {
 }
 
 @Composable
-private fun TopOverlay(now: Date, weather: Weather.Now?, place: Prefs.Place?, hidden: Boolean, onOpenSetup: () -> Unit) {
+private fun TopOverlay(
+    now: Date,
+    weather: Weather.Now?,
+    place: Prefs.Place?,
+    hidden: Boolean,
+    downTo: FocusRequester,
+    onOpenSetup: () -> Unit,
+) {
     val context = LocalContext.current
     // Fades out while browsing the app grid, which scrolls up underneath it.
     val alpha by animateFloatAsState(if (hidden) 0f else 1f, tween(300), label = "overlay")
@@ -543,7 +571,10 @@ private fun TopOverlay(now: Date, weather: Weather.Now?, place: Prefs.Place?, hi
                 focusedContainerColor = Color.White,
                 focusedContentColor = Color.Black,
             ),
-            modifier = Modifier.focusProperties { canFocus = !hidden },
+            modifier = Modifier.focusProperties {
+                canFocus = !hidden
+                down = downTo
+            },
         ) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
     }
 }
