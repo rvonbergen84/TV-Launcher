@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
@@ -45,6 +46,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -221,7 +224,9 @@ fun HomeContent(
             }
         }
 
-        Backdrop(frame, dimmed = inGrid)
+        // 0 on the top row, 1 in the grid. Drives the blur, dim and fades together.
+        val gridAmount = animateFloatAsState(if (inGrid) 1f else 0f, tween(400), label = "grid")
+        Backdrop(frame, gridAmount)
 
         // TVs default to scrolling the selected item a third of the way down the screen,
         // which pushed the top row up. Only scroll as much as needed to keep it in view.
@@ -234,7 +239,13 @@ fun HomeContent(
         ) {
             item(key = "hero") {
                 Box(Modifier.fillMaxWidth().height(heroHeight)) {
-                    frame?.let { Caption(it.photo, Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)) }
+                    frame?.let {
+                        Caption(
+                            it.photo,
+                            Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp)
+                                .graphicsLayer { alpha = 1f - gridAmount.value },
+                        )
+                    }
                 }
             }
             item(key = "favorites") {
@@ -290,7 +301,7 @@ fun HomeContent(
         }
 
         TopOverlay(
-            now, weather, place, hidden = inGrid,
+            now, weather, place, hidden = inGrid, gridAmount = gridAmount,
             downTo = favoriteFocus.getOrNull(lastFavorite) ?: firstFavorite,
             onOpenSetup = onOpenSetup,
         )
@@ -314,17 +325,15 @@ private object KeepInView : BringIntoViewSpec {
 
 // ---------- Background photo ----------
 
-class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo) {
-    /** Soft blurred copy, shown behind the app grid. Made once per photo. */
-    val blurred: ImageBitmap by lazy { softBlur(bitmap) }
-}
+/** A photo ready to show, plus its blurred copy for behind the app grid. */
+class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo, val blurred: ImageBitmap)
 
 /**
  * Smooth blur that works on every Android version (Compose's blur() needs Android 12+).
  * Shrinks the photo to 1/8 size, runs three box-blur passes on it (close to a Gaussian
  * blur), and lets the screen stretch the result back up. Takes a few milliseconds.
  */
-private fun softBlur(source: ImageBitmap): ImageBitmap {
+internal fun softBlur(source: ImageBitmap): ImageBitmap {
     val src = source.asAndroidBitmap()
     val w = maxOf(1, src.width / 8)
     val h = maxOf(1, src.height / 8)
@@ -333,8 +342,8 @@ private fun softBlur(source: ImageBitmap): ImageBitmap {
     small.getPixels(px, 0, w, 0, 0, w, h)
     val tmp = IntArray(w * h)
     repeat(3) {
-        boxBlur(px, tmp, w, h, radius = 5, horizontal = true)
-        boxBlur(tmp, px, w, h, radius = 5, horizontal = false)
+        boxBlur(px, tmp, w, h, radius = 3, horizontal = true)
+        boxBlur(tmp, px, w, h, radius = 3, horizontal = false)
     }
     val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
     out.setPixels(px, 0, w, 0, 0, w, h)
@@ -390,7 +399,9 @@ private fun rememberPhotoFrame(photos: List<Photos.Photo>): Frame? {
                 continue
             }
             failures = 0
-            frame = Frame(bitmap, photo)
+            // Blur it now, in the background, so moving into the grid doesn't stall.
+            val blurred = withContext(Dispatchers.Default) { softBlur(bitmap) }
+            frame = Frame(bitmap, photo, blurred)
             // Fetch the next one now so the switch is instant.
             prefetch(context, photos[index % photos.size].url)
             delay(Prefs.photoSeconds(context) * 1000L)
@@ -401,22 +412,18 @@ private fun rememberPhotoFrame(photos: List<Photos.Photo>): Frame? {
 }
 
 @Composable
-private fun Backdrop(frame: Frame?, dimmed: Boolean) {
-    val dim by animateFloatAsState(if (dimmed) GRID_DIM else 0f, tween(500), label = "dim")
-    val blur by animateFloatAsState(if (dimmed) 1f else 0f, tween(500), label = "blur")
+private fun Backdrop(frame: Frame?, gridAmount: State<Float>) {
     Box(Modifier.fillMaxSize()) {
         Crossfade(targetState = frame, animationSpec = tween(1500), label = "photo") { f ->
             if (f != null) {
                 Box(Modifier.fillMaxSize()) {
                     Image(f.bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    if (blur > 0f) {
-                        Image(
-                            f.blurred,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().alpha(blur),
-                        )
-                    }
+                    Image(
+                        f.blurred,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = gridAmount.value },
+                    )
                 }
             } else {
                 Box(
@@ -441,7 +448,7 @@ private fun Backdrop(frame: Frame?, dimmed: Boolean) {
                 ),
             ),
         )
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)))
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black.copy(alpha = GRID_DIM * gridAmount.value)) })
     }
 }
 
@@ -528,14 +535,16 @@ private fun TopOverlay(
     weather: Weather.Now?,
     place: Prefs.Place?,
     hidden: Boolean,
+    gridAmount: State<Float>,
     downTo: FocusRequester,
     onOpenSetup: () -> Unit,
 ) {
     val context = LocalContext.current
     // Fades out while browsing the app grid, which scrolls up underneath it.
-    val alpha by animateFloatAsState(if (hidden) 0f else 1f, tween(300), label = "overlay")
     Row(
-        Modifier.fillMaxWidth().alpha(alpha).padding(start = SIDE.dp, end = SIDE.dp, top = 28.dp),
+        Modifier.fillMaxWidth()
+            .graphicsLayer { alpha = 1f - gridAmount.value }
+            .padding(start = SIDE.dp, end = SIDE.dp, top = 28.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column {

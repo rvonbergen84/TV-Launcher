@@ -160,7 +160,8 @@ class HomePreviewTest {
         val layout = Catalog.Layout(favorites = favorites, others = apps.drop(5), hidden = emptyList())
         listState = LazyListState()
         val photo = javaClass.getResourceAsStream("/preview/landscape.jpg")!!.use { BitmapFactory.decodeStream(it) }
-        val frame = Frame(photo.asImageBitmap(), Photos.Photo("", "Sunset over the range", "Sample image"))
+        val image = photo.asImageBitmap()
+        val frame = Frame(image, Photos.Photo("", "Sunset over the range", "Sample image"), softBlur(image))
         val now = Calendar.getInstance().apply { set(2026, 10, 6, 19, 42) }.time
 
         compose.mainClock.autoAdvance = false
