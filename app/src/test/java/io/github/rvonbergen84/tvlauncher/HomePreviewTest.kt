@@ -81,8 +81,8 @@ class HomePreviewTest {
         render()
         focus("YouTube")
         press(Key.DirectionDown)
-        compose.onNodeWithContentDescription("Max").assertIsFocused()
-        press(Key.DirectionRight, times = 4)
+        compose.onNodeWithContentDescription("Hulu").assertIsFocused()
+        press(Key.DirectionRight, times = 3)
         compose.onNodeWithContentDescription("Spotify").assertIsFocused()
         capture("grid")
     }
@@ -125,8 +125,8 @@ class HomePreviewTest {
 
     private fun render() {
         val apps = sampleApps()
-        val favorites = apps.take(4)
-        val layout = Catalog.Layout(favorites = favorites, others = apps.drop(4), hidden = emptyList())
+        val favorites = apps.take(5)
+        val layout = Catalog.Layout(favorites = favorites, others = apps.drop(5), hidden = emptyList())
         listState = LazyListState()
         val photo = javaClass.getResourceAsStream("/preview/landscape.jpg")!!.use { BitmapFactory.decodeStream(it) }
         val frame = Frame(photo.asImageBitmap(), Photos.Photo("", "Sunset over the range", "Sample image"))

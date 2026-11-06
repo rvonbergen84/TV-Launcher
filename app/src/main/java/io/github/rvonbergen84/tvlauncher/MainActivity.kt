@@ -31,6 +31,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        resources.displayMetrics.let {
+            Prefs.log(this, "Screen ${it.widthPixels}x${it.heightPixels}, density ${it.density}")
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 LauncherScreen(resumeTick.intValue, homeTick.intValue)

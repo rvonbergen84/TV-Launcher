@@ -80,6 +80,7 @@ import androidx.tv.material3.Text
 import coil.imageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
+import coil.size.Precision
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -88,7 +89,7 @@ import java.util.Date
 import kotlin.random.Random
 
 private const val SIDE = 56
-private const val GRID_COLUMNS = 5
+private const val GRID_COLUMNS = 6
 private val TileShape = RoundedCornerShape(10.dp)
 private val TextShadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 2f), 10f)
 
@@ -182,7 +183,7 @@ fun HomeContent(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val favGap = 28.dp
+        val favGap = 24.dp
         val gridGap = 20.dp
         val content = maxWidth - (SIDE * 2).dp
         val favWidth = (content - favGap * (Prefs.FAVORITE_SLOTS - 1)) / Prefs.FAVORITE_SLOTS
@@ -213,7 +214,8 @@ fun HomeContent(
         CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) {
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(start = SIDE.dp, end = SIDE.dp, bottom = 48.dp),
+            // Room at the end so the grid can always scroll the top row fully off screen.
+            contentPadding = PaddingValues(start = SIDE.dp, end = SIDE.dp, bottom = maxHeight / 2),
             modifier = Modifier.fillMaxSize(),
         ) {
             item(key = "hero") {
@@ -297,14 +299,51 @@ class Frame(val bitmap: ImageBitmap, val photo: Photos.Photo) {
 }
 
 /**
- * Cheap blur that works on every Android version: shrink the photo a lot, then let
- * smooth scaling stretch it back up. (Compose's blur() needs Android 12 or newer.)
+ * Smooth blur that works on every Android version (Compose's blur() needs Android 12+).
+ * Shrinks the photo to 1/8 size, runs three box-blur passes on it (close to a Gaussian
+ * blur), and lets the screen stretch the result back up. Takes a few milliseconds.
  */
 private fun softBlur(source: ImageBitmap): ImageBitmap {
     val src = source.asAndroidBitmap()
-    val quarter = android.graphics.Bitmap.createScaledBitmap(src, src.width / 4, src.height / 4, true)
-    val tiny = android.graphics.Bitmap.createScaledBitmap(quarter, src.width / 32, src.height / 32, true)
-    return android.graphics.Bitmap.createScaledBitmap(tiny, src.width / 4, src.height / 4, true).asImageBitmap()
+    val w = maxOf(1, src.width / 8)
+    val h = maxOf(1, src.height / 8)
+    val small = android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
+    val px = IntArray(w * h)
+    small.getPixels(px, 0, w, 0, 0, w, h)
+    val tmp = IntArray(w * h)
+    repeat(3) {
+        boxBlur(px, tmp, w, h, radius = 5, horizontal = true)
+        boxBlur(tmp, px, w, h, radius = 5, horizontal = false)
+    }
+    val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+    out.setPixels(px, 0, w, 0, 0, w, h)
+    return out.asImageBitmap()
+}
+
+/** One pass of a sliding-window box blur along rows or columns. */
+private fun boxBlur(input: IntArray, output: IntArray, w: Int, h: Int, radius: Int, horizontal: Boolean) {
+    val lines = if (horizontal) h else w
+    val length = if (horizontal) w else h
+    val window = radius * 2 + 1
+    for (line in 0 until lines) {
+        fun at(i: Int): Int {
+            val c = i.coerceIn(0, length - 1)
+            return input[if (horizontal) line * w + c else c * w + line]
+        }
+        var r = 0; var g = 0; var b = 0
+        for (i in -radius..radius) {
+            val p = at(i); r += (p shr 16) and 0xFF; g += (p shr 8) and 0xFF; b += p and 0xFF
+        }
+        for (i in 0 until length) {
+            val idx = if (horizontal) line * w + i else i * w + line
+            output[idx] = (0xFF shl 24) or ((r / window) shl 16) or ((g / window) shl 8) or (b / window)
+            val add = at(i + radius + 1)
+            val drop = at(i - radius)
+            r += ((add shr 16) and 0xFF) - ((drop shr 16) and 0xFF)
+            g += ((add shr 8) and 0xFF) - ((drop shr 8) and 0xFF)
+            b += (add and 0xFF) - (drop and 0xFF)
+        }
+    }
 }
 
 /** How dark the photo gets behind the app grid. */
@@ -385,8 +424,15 @@ private fun Backdrop(frame: Frame?, dimmed: Boolean) {
     }
 }
 
-private fun photoRequest(context: Context, url: String) =
-    ImageRequest.Builder(context).data(url).size(1920, 1080).allowHardware(false).build()
+private fun photoRequest(context: Context, url: String): ImageRequest {
+    val m = context.resources.displayMetrics
+    // Decode at the screen's full size, exactly, so nothing gets scaled down first.
+    return ImageRequest.Builder(context).data(url)
+        .size(maxOf(m.widthPixels, m.heightPixels), minOf(m.widthPixels, m.heightPixels))
+        .precision(Precision.EXACT)
+        .allowHardware(false)
+        .build()
+}
 
 private suspend fun loadBitmap(context: Context, url: String): ImageBitmap? {
     val result = context.imageLoader.execute(photoRequest(context, url))

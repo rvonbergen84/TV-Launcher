@@ -2,13 +2,16 @@ package io.github.rvonbergen84.tvlauncher
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
+import android.graphics.drawable.Drawable
 import android.media.tv.TvContract
 import android.media.tv.TvInputInfo
 import android.media.tv.TvInputManager
 import android.provider.Settings
+import android.util.DisplayMetrics
 import androidx.core.graphics.drawable.toBitmap
 
 data class AppEntry(
@@ -80,10 +83,14 @@ object Catalog {
 
     private fun toEntry(pm: PackageManager, info: ResolveInfo): AppEntry {
         val activity = info.activityInfo
-        val banner = activity.loadBanner(pm) ?: activity.applicationInfo.loadBanner(pm)
-        val drawable = banner ?: activity.loadIcon(pm)
+        val app = activity.applicationInfo
+        // Ask for the sharpest version the app ships (xxxhdpi). The default load gives
+        // the TV's own density, which is often a small 320x180 banner.
+        val banner = hiRes(pm, app, activity.banner) ?: hiRes(pm, app, app.banner)
+            ?: activity.loadBanner(pm) ?: app.loadBanner(pm)
+        val drawable = banner ?: hiRes(pm, app, activity.iconResource) ?: activity.loadIcon(pm)
         val bitmap = runCatching {
-            if (banner != null) drawable.toBitmap(320, 180) else drawable.toBitmap(128, 128)
+            if (banner != null) drawable.toBitmap(BANNER_W, BANNER_H) else drawable.toBitmap(ICON_PX, ICON_PX)
         }.getOrNull()
         return AppEntry(
             packageName = activity.packageName,
@@ -91,6 +98,18 @@ object Catalog {
             image = bitmap,
             hasBanner = banner != null,
         )
+    }
+
+    // About 1.6x the largest tile on a 1080p screen, so focus zoom stays sharp.
+    private const val BANNER_W = 480
+    private const val BANNER_H = 270
+    private const val ICON_PX = 192
+
+    private fun hiRes(pm: PackageManager, app: ApplicationInfo, resId: Int): Drawable? {
+        if (resId == 0) return null
+        return runCatching {
+            pm.getResourcesForApplication(app).getDrawableForDensity(resId, DisplayMetrics.DENSITY_XXXHIGH, null)
+        }.getOrNull()
     }
 
     fun launchApp(context: Context, packageName: String): Boolean {

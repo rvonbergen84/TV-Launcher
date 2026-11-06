@@ -26,7 +26,7 @@ object Prefs {
     private const val KEY_PHOTO_SECONDS = "photo_seconds"
     private const val MAX_LOG_LINES = 40
 
-    const val FAVORITE_SLOTS = 4
+    const val FAVORITE_SLOTS = 5
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
