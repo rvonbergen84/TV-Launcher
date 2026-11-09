@@ -56,7 +56,7 @@ fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
     var log by remember { mutableStateOf(Prefs.readLog(context)) }
     var place by remember { mutableStateOf(Prefs.place(context)) }
     var fahrenheit by remember { mutableStateOf(Prefs.fahrenheit(context)) }
-    var photoSource by remember { mutableStateOf(Prefs.photoSource(context)) }
+    var photoThemes by remember { mutableStateOf(Prefs.photoThemes(context)) }
     var photoSeconds by remember { mutableStateOf(Prefs.photoSeconds(context)) }
     var hidden by remember { mutableStateOf(Catalog.arrange(context, Catalog.lastApps, Catalog.lastInputs).hidden) }
     var editingPlace by remember { mutableStateOf(false) }
@@ -92,13 +92,20 @@ fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
                 }) { Text("Temperature: ${if (fahrenheit) "°F" else "°C"}") }
             }
 
-            item { Heading("Photos") }
-            item {
-                Button(onClick = {
-                    val all = Photos.Source.entries
-                    photoSource = all[(all.indexOf(photoSource) + 1) % all.size]
-                    Prefs.setPhotoSource(context, photoSource)
-                }) { Text("Show: ${photoSource.label}") }
+            item { Heading("Pictures") }
+            Photos.Theme.entries.forEach { theme ->
+                item {
+                    val on = theme in photoThemes
+                    Button(onClick = {
+                        val next = if (on) photoThemes - theme else photoThemes + theme
+                        if (next.isEmpty()) {
+                            toast(context, "Keep at least one kind of picture on.")
+                        } else {
+                            photoThemes = next
+                            Prefs.setPhotoThemes(context, next)
+                        }
+                    }) { Text("${theme.label}: ${if (on) "On" else "Off"}") }
+                }
             }
             item {
                 Button(onClick = {
@@ -110,9 +117,9 @@ fun SetupScreen(resumeTick: Int, onClose: () -> Unit) {
                 Button(onClick = {
                     scope.launch {
                         val n = withContext(Dispatchers.IO) { Photos.load(context, forceRefresh = true).size }
-                        toast(context, if (n > 0) "Loaded $n new photos." else "Couldn't get new photos. See the log.")
+                        toast(context, if (n > 0) "Loaded $n new pictures. They'll show on the home screen." else "Couldn't get new pictures. See the log.")
                     }
-                }) { Text("Get new photos now") }
+                }) { Text("Get new pictures now") }
             }
 
             item { Heading("Apps") }

@@ -23,7 +23,7 @@ object Prefs {
     private const val KEY_PLACE_LAT = "place_lat"
     private const val KEY_PLACE_LON = "place_lon"
     private const val KEY_FAHRENHEIT = "fahrenheit"
-    private const val KEY_PHOTO_SOURCE = "photo_source"
+    private const val KEY_PHOTO_THEMES = "photo_themes"
     private const val KEY_PHOTO_SECONDS = "photo_seconds"
     private const val MAX_LOG_LINES = 40
 
@@ -107,11 +107,13 @@ object Prefs {
 
     // --- Photos ---
 
-    fun photoSource(context: Context): Photos.Source =
-        runCatching { Photos.Source.valueOf(prefs(context).getString(KEY_PHOTO_SOURCE, "")!!) }
-            .getOrDefault(Photos.Source.BOTH)
-    fun setPhotoSource(context: Context, source: Photos.Source) =
-        prefs(context).edit().putString(KEY_PHOTO_SOURCE, source.name).apply()
+    /** Which picture themes are on. All of them by default. */
+    fun photoThemes(context: Context): Set<Photos.Theme> {
+        val saved = prefs(context).getStringSet(KEY_PHOTO_THEMES, null) ?: return Photos.Theme.entries.toSet()
+        return saved.mapNotNull { name -> Photos.Theme.entries.firstOrNull { it.name == name } }.toSet()
+    }
+    fun setPhotoThemes(context: Context, themes: Set<Photos.Theme>) =
+        prefs(context).edit().putStringSet(KEY_PHOTO_THEMES, themes.map { it.name }.toSet()).apply()
 
     fun photoSeconds(context: Context) = prefs(context).getInt(KEY_PHOTO_SECONDS, 30)
     fun setPhotoSeconds(context: Context, seconds: Int) =

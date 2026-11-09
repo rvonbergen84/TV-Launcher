@@ -478,11 +478,19 @@ private fun photoRequest(context: Context, url: String): ImageRequest {
 }
 
 private suspend fun loadBitmap(context: Context, url: String): ImageBitmap? {
+    if (AbstractArt.isAbstract(url)) {
+        // Drawn at half the screen size: it's all soft shapes, so it scales up cleanly.
+        val m = context.resources.displayMetrics
+        val w = maxOf(m.widthPixels, m.heightPixels) / 2
+        val h = minOf(m.widthPixels, m.heightPixels) / 2
+        return withContext(Dispatchers.Default) { runCatching { AbstractArt.render(url, w, h).asImageBitmap() }.getOrNull() }
+    }
     val result = context.imageLoader.execute(photoRequest(context, url))
     return ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap?.asImageBitmap()
 }
 
 private fun prefetch(context: Context, url: String) {
+    if (AbstractArt.isAbstract(url)) return // nothing to download
     context.imageLoader.enqueue(photoRequest(context, url))
 }
 
